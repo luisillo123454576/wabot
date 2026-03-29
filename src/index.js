@@ -3,6 +3,8 @@ const dotenv = require('dotenv')
 
 dotenv.config()
 
+const supabase = require('./services/supabase')
+
 const app = express()
 app.use(express.json())
 
