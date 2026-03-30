@@ -31,6 +31,7 @@ router.post('/', async (req, res) => {
     const userText = message.text.body
     const phoneNumberId = change.metadata.phone_number_id
 
+    // Buscar negocio
     const { data: business } = await supabase
       .from('businesses')
       .select('*')
@@ -41,10 +42,33 @@ router.post('/', async (req, res) => {
       ? business.ai_context
       : 'Eres un asistente general. El negocio aún no ha configurado su información.'
 
+    // Buscar o crear cliente
+    let customerId = null
+    if (business) {
+      const { data: existingCustomer } = await supabase
+        .from('customers')
+        .select('id')
+        .eq('business_id', business.id)
+        .eq('phone_number', from)
+        .single()
+
+      if (existingCustomer) {
+        customerId = existingCustomer.id
+      } else {
+        const { data: newCustomer } = await supabase
+          .from('customers')
+          .insert({ business_id: business.id, phone_number: from })
+          .select('id')
+          .single()
+        customerId = newCustomer.id
+      }
+    }
+
+    // Historial de conversación del cliente
     const { data: history } = await supabase
       .from('conversations')
       .select('role, message')
-      .eq('business_id', business?.id || '00000000-0000-0000-0000-000000000000')
+      .eq('customer_id', customerId || '00000000-0000-0000-0000-000000000000')
       .order('created_at', { ascending: true })
       .limit(10)
 
@@ -58,10 +82,11 @@ router.post('/', async (req, res) => {
 
     await sendMessage(from, aiReply)
 
-    if (business) {
+    // Guardar mensajes con customer_id real
+    if (business && customerId) {
       await supabase.from('conversations').insert([
-        { business_id: business.id, customer_id: null, role: 'user', message: userText },
-        { business_id: business.id, customer_id: null, role: 'assistant', message: aiReply }
+        { business_id: business.id, customer_id: customerId, role: 'user', message: userText },
+        { business_id: business.id, customer_id: customerId, role: 'assistant', message: aiReply }
       ])
     }
   } catch (err) {
