@@ -1,21 +1,27 @@
-const { GoogleGenerativeAI } = require('@google/generative-ai')
+const Groq = require('groq-sdk')
 
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY)
+const groq = new Groq({ apiKey: process.env.GROQ_API_KEY })
 
 async function getAIResponse(businessContext, conversationHistory, userMessage) {
-  const model = genAI.getGenerativeModel({
-    model: 'gemini-2.0-flash',
-    systemInstruction: `Eres un asistente de ventas para el siguiente negocio. Responde siempre en español, de forma amable y concisa.\n\nInformación del negocio:\n${businessContext}`
+  const messages = [
+    {
+      role: 'system',
+      content: `Eres un asistente de ventas para el siguiente negocio. Responde siempre en español, de forma amable y concisa.\n\nInformación del negocio:\n${businessContext}`
+    },
+    ...conversationHistory.map(h => ({
+      role: h.role === 'assistant' ? 'assistant' : 'user',
+      content: h.content
+    })),
+    { role: 'user', content: userMessage }
+  ]
+
+  const response = await groq.chat.completions.create({
+    model: 'llama-3.3-70b-versatile',
+    messages,
+    max_tokens: 1000
   })
 
-  const history = conversationHistory.map(h => ({
-    role: h.role === 'assistant' ? 'model' : 'user',
-    parts: [{ text: h.content }]
-  }))
-
-  const chat = model.startChat({ history })
-  const result = await chat.sendMessage(userMessage)
-  return result.response.text()
+  return response.choices[0].message.content
 }
 
 module.exports = { getAIResponse }
