@@ -1,30 +1,21 @@
-const axios = require('axios')
+const { GoogleGenerativeAI } = require('@google/generative-ai')
+
+const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY)
 
 async function getAIResponse(businessContext, conversationHistory, userMessage) {
-  const response = await axios.post(
-    'https://api.anthropic.com/v1/messages',
-    {
-      model: 'claude-sonnet-4-20250514',
-      max_tokens: 1000,
-      system: `Eres un asistente de ventas para el siguiente negocio. Responde siempre en español, de forma amable y concisa.
+  const model = genAI.getGenerativeModel({
+    model: 'gemini-1.5-flash',
+    systemInstruction: `Eres un asistente de ventas para el siguiente negocio. Responde siempre en español, de forma amable y concisa.\n\nInformación del negocio:\n${businessContext}`
+  })
 
-Información del negocio:
-${businessContext}`,
-      messages: [
-        ...conversationHistory,
-        { role: 'user', content: userMessage }
-      ]
-    },
-    {
-      headers: {
-        'x-api-key': process.env.ANTHROPIC_API_KEY,
-        'anthropic-version': '2023-06-01',
-        'content-type': 'application/json'
-      }
-    }
-  )
+  const history = conversationHistory.map(h => ({
+    role: h.role === 'assistant' ? 'model' : 'user',
+    parts: [{ text: h.content }]
+  }))
 
-  return response.data.content[0].text
+  const chat = model.startChat({ history })
+  const result = await chat.sendMessage(userMessage)
+  return result.response.text()
 }
 
 module.exports = { getAIResponse }
