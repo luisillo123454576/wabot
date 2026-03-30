@@ -3,6 +3,7 @@ const router = Router()
 const { getAIResponse } = require('../services/ai')
 const { sendMessage } = require('../services/whatsapp')
 const supabase = require('../services/supabase')
+const { transcribeAudio } = require('../services/transcription')
 
 router.get('/', (req, res) => {
   const mode = req.query['hub.mode']
@@ -25,10 +26,20 @@ router.post('/', async (req, res) => {
     const change = entry?.changes?.[0]?.value
     const message = change?.messages?.[0]
 
-    if (!message || message.type !== 'text') return
+    if (!message || (message.type !== 'text' && message.type !== 'audio')) return
+    let userText = ''
+
+    if (message.type === 'text') {
+      userText = message.text.body
+    } else if (message.type === 'audio') {
+      console.log('Audio recibido, transcribiendo...')
+      userText = await transcribeAudio(message.audio.id)
+      console.log('Transcripción:', userText)
+    }
+
+
 
     const from = message.from
-    const userText = message.text.body
     const phoneNumberId = change.metadata.phone_number_id
 
     // Buscar negocio
