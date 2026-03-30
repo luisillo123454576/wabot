@@ -18,6 +18,7 @@ router.get('/', (req, res) => {
 
 router.post('/', async (req, res) => {
   res.status(200).send('OK')
+  console.log('POST recibido, procesando...')
 
   try {
     const entry = req.body?.entry?.[0]
@@ -30,7 +31,6 @@ router.post('/', async (req, res) => {
     const userText = message.text.body
     const phoneNumberId = change.metadata.phone_number_id
 
-    // Buscar negocio por phone_number_id
     const { data: business } = await supabase
       .from('businesses')
       .select('*')
@@ -41,7 +41,6 @@ router.post('/', async (req, res) => {
       ? business.ai_context
       : 'Eres un asistente general. El negocio aún no ha configurado su información.'
 
-    // Historial de conversación
     const { data: history } = await supabase
       .from('conversations')
       .select('role, message')
@@ -59,7 +58,6 @@ router.post('/', async (req, res) => {
 
     await sendMessage(from, aiReply)
 
-    // Guardar mensajes si hay negocio
     if (business) {
       await supabase.from('conversations').insert([
         { business_id: business.id, customer_id: null, role: 'user', message: userText },
@@ -70,8 +68,6 @@ router.post('/', async (req, res) => {
     console.error('Error procesando mensaje:', err.message)
     console.error('Error completo:', err.response?.data || err.message)
   }
-  
-  
 })
 
 module.exports = router
