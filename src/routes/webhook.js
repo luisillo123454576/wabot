@@ -55,6 +55,7 @@ router.post('/', async (req, res) => {
     }))
 
     const aiReply = await getAIResponse(businessContext, conversationHistory, userText)
+    console.log('AI reply:', aiReply)
 
     await sendMessage(from, aiReply)
 
@@ -67,7 +68,10 @@ router.post('/', async (req, res) => {
     }
   } catch (err) {
     console.error('Error procesando mensaje:', err.message)
+    console.error('Error completo:', err.response?.data || err.message)
   }
+  
+  
 })
 
 module.exports = router
