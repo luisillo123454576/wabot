@@ -4,6 +4,7 @@ const { getAIResponse } = require('../services/ai')
 const { sendMessage } = require('../services/whatsapp')
 const supabase = require('../services/supabase')
 const { transcribeAudio } = require('../services/transcription')
+const { analyzePaymentProof } = require('../services/vision')
 
 router.get('/', (req, res) => {
   const mode = req.query['hub.mode']
@@ -26,19 +27,52 @@ router.post('/', async (req, res) => {
     const change = entry?.changes?.[0]?.value
     const message = change?.messages?.[0]
 
-    if (!message || (message.type !== 'text' && message.type !== 'audio')) return
-    let userText = ''
+    if (!message || !['text', 'audio', 'image'].includes(message.type)) return
 
-    if (message.type === 'text') {
-      userText = message.text.body
-    } else if (message.type === 'audio') {
-      console.log('Audio recibido, transcribiendo...')
-      userText = await transcribeAudio(message.audio.id)
-      console.log('Transcripción:', userText)
+let userText = ''
+
+if (message.type === 'text') {
+  userText = message.text.body
+} else if (message.type === 'audio') {
+  console.log('Audio recibido, transcribiendo...')
+  userText = await transcribeAudio(message.audio.id)
+  console.log('Transcripción:', userText)
+} else if (message.type === 'image') {
+  console.log('Imagen recibida, analizando...')
+  
+  await sendMessage(from, '⏳ Recibí tu comprobante, estoy verificando el pago...')
+
+  const analisis = await analyzePaymentProof(message.image.id)
+  console.log('Análisis:', analisis)
+
+  if (!analisis.es_comprobante) {
+    await sendMessage(from, 'No pude identificar esto como un comprobante de pago. ¿Puedes enviar una imagen más clara?')
+    return
+  }
+
+  if (analisis.confianza === 'alta' && analisis.estado === 'exitoso') {
+    await sendMessage(from, `✅ Pago verificado por $${analisis.monto?.toLocaleString()} vía ${analisis.entidad}. ¡Tu pedido está confirmado y en preparación!`)
+    
+    // Notificar al dueño
+    if (business?.owner_phone) {
+      await sendMessage(
+        business.owner_phone,
+        `💰 Pago recibido:\nCliente: +${from}\nMonto: $${analisis.monto?.toLocaleString()}\nEntidad: ${analisis.entidad}\nFecha: ${analisis.fecha}\n\nEl pedido fue confirmado automáticamente.`
+      )
     }
-
-
-
+  } else {
+    await sendMessage(from, '⏳ Tu comprobante está en revisión. El negocio lo verificará en un momento y te confirmamos.')
+    
+    // Notificar al dueño para revisión manual
+    if (business?.owner_phone) {
+      await sendMessage(
+        business.owner_phone,
+        `⚠️ Comprobante requiere revisión manual:\nCliente: +${from}\nMonto detectado: $${analisis.monto?.toLocaleString()}\nEntidad: ${analisis.entidad}\nConfianza: ${analisis.confianza}\n\nResponde OK para confirmar o NO para rechazar.`
+      )
+    }
+  }
+  return
+}
     const from = message.from
     const phoneNumberId = change.metadata.phone_number_id
 
