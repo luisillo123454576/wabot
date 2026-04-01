@@ -184,6 +184,29 @@ router.post('/', async (req, res) => {
       console.log('Transcripción:', userText)
     }
 
+    // Verificar estado del último pago del cliente
+    const { data: lastPayment } = await supabase
+      .from('pending_payments')
+      .select('status, order_details')
+      .eq('business_id', business?.id)
+      .eq('customer_phone', from)
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .single()
+
+    let paymentContext = ''
+    if (lastPayment?.status === 'rejected') {
+      paymentContext = '\n\nIMPORTANTE: El último pago de este cliente fue RECHAZADO por el negocio. Si el cliente insiste en que pagó, dile que contacte directamente al negocio. No confirmes ningún pedido ni digas que está en camino.'
+    } else if (lastPayment?.status === 'confirmed') {
+      paymentContext = '\n\nINFO: El último pago fue confirmado. Si el cliente quiere hacer un nuevo pedido, trátalo como un pedido completamente nuevo ignorando el historial anterior.'
+    } else if (lastPayment?.status === 'pending') {
+      paymentContext = '\n\nIMPORTANTE: El cliente tiene un pago pendiente de verificación. Dile que espere la confirmación antes de hacer otro pedido.'
+    }
+
+    const businessContext = (business
+      ? business.ai_context
+      : 'Eres un asistente general. El negocio aún no ha configurado su información.') + paymentContext
+
     // Historial de conversación
     const { data: history } = await supabase
       .from('conversations')
@@ -196,10 +219,6 @@ router.post('/', async (req, res) => {
       role: h.role,
       content: h.message
     }))
-
-    const businessContext = business
-      ? business.ai_context
-      : 'Eres un asistente general. El negocio aún no ha configurado su información.'
 
     const aiReply = await getAIResponse(businessContext, conversationHistory, userText)
     console.log('AI reply:', aiReply)
