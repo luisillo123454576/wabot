@@ -45,7 +45,7 @@ router.post('/', async (req, res) => {
     if (business) {
       const { data: existingCustomer } = await supabase
         .from('customers')
-        .select('id')
+        .select('id, last_interaction')
         .eq('business_id', business.id)
         .eq('phone_number', from)
         .single()
@@ -55,7 +55,7 @@ router.post('/', async (req, res) => {
       } else {
         const { data: newCustomer } = await supabase
           .from('customers')
-          .insert({ business_id: business.id, phone_number: from })
+          .insert({ business_id: business.id, phone_number: from, last_interaction: new Date().toISOString() })
           .select('id')
           .single()
         customerId = newCustomer.id
@@ -89,6 +89,27 @@ router.post('/', async (req, res) => {
             .update({ status: 'confirmed' })
             .eq('id', pending.id)
 
+          // Buscar customerId del cliente para limpiar historial
+          const { data: confirmedCustomer } = await supabase
+            .from('customers')
+            .select('id')
+            .eq('business_id', business.id)
+            .eq('phone_number', pending.customer_phone)
+            .single()
+
+          // Limpiar historial para que el próximo pedido sea fresh
+          if (confirmedCustomer) {
+            await supabase
+              .from('conversations')
+              .delete()
+              .eq('customer_id', confirmedCustomer.id)
+
+            await supabase
+              .from('customers')
+              .update({ last_interaction: null })
+              .eq('id', confirmedCustomer.id)
+          }
+
           await sendMessage(
             pending.customer_phone,
             '✅ ¡Tu pago fue confirmado! Tu pedido está en preparación. En breve te lo llevamos. 🍔🔥'
@@ -118,7 +139,6 @@ router.post('/', async (req, res) => {
 
       await analyzePaymentProof(message.image.id)
 
-      // Obtener resumen del pedido desde historial
       const { data: recentHistory } = await supabase
         .from('conversations')
         .select('role, message')
@@ -138,7 +158,6 @@ router.post('/', async (req, res) => {
         ? orderMessage.substring(0, 300) + '...'
         : orderMessage
 
-      // Guardar pago pendiente con detalle
       await supabase
         .from('pending_payments')
         .insert({
@@ -147,7 +166,6 @@ router.post('/', async (req, res) => {
           order_details: orderSummary
         })
 
-      // Notificar al dueño con imagen y resumen
       if (business?.owner_phone) {
         await axios.post(
           `https://graph.facebook.com/v22.0/${process.env.WHATSAPP_PHONE_ID}/messages`,
@@ -184,21 +202,44 @@ router.post('/', async (req, res) => {
       console.log('Transcripción:', userText)
     }
 
-    // Verificar estado del último pago del cliente
+    // Verificar estado del último pago
     const { data: lastPayment } = await supabase
       .from('pending_payments')
-      .select('status, order_details')
+      .select('status, order_details, created_at')
       .eq('business_id', business?.id)
       .eq('customer_phone', from)
       .order('created_at', { ascending: false })
       .limit(1)
       .single()
 
+    // Verificar tiempo desde última interacción
+    const { data: customerRecord } = await supabase
+      .from('customers')
+      .select('last_interaction')
+      .eq('id', customerId)
+      .single()
+
+    const lastInteraction = customerRecord?.last_interaction
+      ? new Date(customerRecord.last_interaction)
+      : null
+
+    const hoursElapsed = lastInteraction
+      ? (Date.now() - lastInteraction.getTime()) / (1000 * 60 * 60)
+      : 999
+
+    // Actualizar last_interaction
+    if (customerId) {
+      await supabase
+        .from('customers')
+        .update({ last_interaction: new Date().toISOString() })
+        .eq('id', customerId)
+    }
+
     let paymentContext = ''
     if (lastPayment?.status === 'rejected') {
-      paymentContext = '\n\nIMPORTANTE: El último pago de este cliente fue RECHAZADO por el negocio. Si el cliente insiste en que pagó, dile que contacte directamente al negocio. No confirmes ningún pedido ni digas que está en camino.'
+      paymentContext = '\n\nIMPORTANTE: El último pago de este cliente fue RECHAZADO. Si el cliente insiste en que pagó, dile que contacte directamente al negocio. No confirmes ningún pedido ni digas que está en camino.'
     } else if (lastPayment?.status === 'confirmed') {
-      paymentContext = '\n\nINFO: El último pago fue confirmado. Si el cliente quiere hacer un nuevo pedido, trátalo como un pedido completamente nuevo ignorando el historial anterior.'
+      paymentContext = '\n\nINFO: El último pago fue confirmado y el historial fue reiniciado. Trata este mensaje como inicio de conversación nueva.'
     } else if (lastPayment?.status === 'pending') {
       paymentContext = '\n\nIMPORTANTE: El cliente tiene un pago pendiente de verificación. Dile que espere la confirmación antes de hacer otro pedido.'
     }
@@ -207,13 +248,16 @@ router.post('/', async (req, res) => {
       ? business.ai_context
       : 'Eres un asistente general. El negocio aún no ha configurado su información.') + paymentContext
 
-    // Historial de conversación
-    const { data: history } = await supabase
-      .from('conversations')
-      .select('role, message')
-      .eq('customer_id', customerId || '00000000-0000-0000-0000-000000000000')
-      .order('created_at', { ascending: true })
-      .limit(10)
+    // Historial: vacío si pasaron más de 8 horas
+    const useHistory = hoursElapsed <= 8
+    const { data: history } = useHistory
+      ? await supabase
+          .from('conversations')
+          .select('role, message')
+          .eq('customer_id', customerId || '00000000-0000-0000-0000-000000000000')
+          .order('created_at', { ascending: true })
+          .limit(10)
+      : { data: [] }
 
     const conversationHistory = (history || []).map(h => ({
       role: h.role,
