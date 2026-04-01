@@ -39,42 +39,74 @@ router.post('/', async (req, res) => {
       .eq('phone_number', phoneNumberId)
       .single()
 
-    const businessContext = business
-      ? business.ai_context
-      : 'Eres un asistente general. El negocio aún no ha configurado su información.'
+    // Detectar si quien escribe es el dueño
+    const isOwner = business?.owner_phone === from
+
+    if (isOwner && message.type === 'text') {
+      const response = message.text.body.trim().toUpperCase()
+
+      if (response === 'OK' || response === 'NO') {
+        // Buscar el pago pendiente más reciente
+        const { data: pending } = await supabase
+          .from('pending_payments')
+          .select('*')
+          .eq('business_id', business.id)
+          .eq('status', 'pending')
+          .order('created_at', { ascending: true })
+          .limit(1)
+          .single()
+
+        if (!pending) {
+          await sendMessage(from, 'No hay pagos pendientes por verificar.')
+          return
+        }
+
+        if (response === 'OK') {
+          await supabase
+            .from('pending_payments')
+            .update({ status: 'confirmed' })
+            .eq('id', pending.id)
+
+          await sendMessage(
+            pending.customer_phone,
+            '✅ ¡Tu pago fue confirmado! Tu pedido está en preparación. En breve te lo llevamos. 🍔🔥'
+          )
+          await sendMessage(from, `✅ Pago confirmado. Cliente +${pending.customer_phone} fue notificado.`)
+        } else {
+          await supabase
+            .from('pending_payments')
+            .update({ status: 'rejected' })
+            .eq('id', pending.id)
+
+          await sendMessage(
+            pending.customer_phone,
+            '❌ No pudimos verificar tu pago. Por favor contáctanos directamente para resolver esto.'
+          )
+          await sendMessage(from, `❌ Pago rechazado. Cliente +${pending.customer_phone} fue notificado.`)
+        }
+        return
+      }
+    }
 
     // Manejar imagen
     if (message.type === 'image') {
       console.log('Imagen recibida, analizando...')
 
-      await sendMessage(from, '⏳ Recibí tu comprobante, estoy verificando el pago...')
+      await sendMessage(from, '⏳ Recibí tu comprobante, estoy verificando el pago. Dame un momento...')
 
       const analisis = await analyzePaymentProof(message.image.id)
-      console.log('Análisis:', analisis)
 
-      if (!analisis.es_comprobante) {
-        await sendMessage(from, 'No pude identificar esto como un comprobante de pago. ¿Puedes enviar una imagen más clara?')
-        return
-      }
+      // Guardar pago pendiente
+      await supabase
+        .from('pending_payments')
+        .insert({ business_id: business?.id, customer_phone: from })
 
-      if (analisis.confianza === 'alta' && analisis.estado === 'exitoso') {
-        await sendMessage(from, `✅ Pago verificado por $${analisis.monto?.toLocaleString()} vía ${analisis.entidad}. ¡Tu pedido está confirmado y en preparación!`)
-
-        if (business?.owner_phone) {
-          await sendMessage(
-            business.owner_phone,
-            `💰 Pago recibido:\nCliente: +${from}\nMonto: $${analisis.monto?.toLocaleString()}\nEntidad: ${analisis.entidad}\nFecha: ${analisis.fecha}\n\nEl pedido fue confirmado automáticamente.`
-          )
-        }
-      } else {
-        await sendMessage(from, '⏳ Tu comprobante está en revisión. El negocio lo verificará en un momento y te confirmamos.')
-
-        if (business?.owner_phone) {
-          await sendMessage(
-            business.owner_phone,
-            `⚠️ Comprobante requiere revisión manual:\nCliente: +${from}\nMonto detectado: $${analisis.monto?.toLocaleString()}\nEntidad: ${analisis.entidad}\nConfianza: ${analisis.confianza}\n\nResponde OK para confirmar o NO para rechazar.`
-          )
-        }
+      // Notificar al dueño
+      if (business?.owner_phone) {
+        await sendMessage(
+          business.owner_phone,
+          `💰 Comprobante de pago recibido:\nCliente: +${from}\n\nResponde OK para confirmar o NO para rechazar.`
+        )
       }
       return
     }
@@ -124,6 +156,10 @@ router.post('/', async (req, res) => {
       role: h.role,
       content: h.message
     }))
+
+    const businessContext = business
+      ? business.ai_context
+      : 'Eres un asistente general. El negocio aún no ha configurado su información.'
 
     const aiReply = await getAIResponse(businessContext, conversationHistory, userText)
     console.log('AI reply:', aiReply)
