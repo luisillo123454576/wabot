@@ -39,6 +39,28 @@ router.post('/', async (req, res) => {
       .eq('phone_number', phoneNumberId)
       .single()
 
+    // Buscar o crear cliente
+    let customerId = null
+    if (business) {
+      const { data: existingCustomer } = await supabase
+        .from('customers')
+        .select('id')
+        .eq('business_id', business.id)
+        .eq('phone_number', from)
+        .single()
+
+      if (existingCustomer) {
+        customerId = existingCustomer.id
+      } else {
+        const { data: newCustomer } = await supabase
+          .from('customers')
+          .insert({ business_id: business.id, phone_number: from })
+          .select('id')
+          .single()
+        customerId = newCustomer.id
+      }
+    }
+
     // Detectar si quien escribe es el dueño
     const isOwner = business?.owner_phone === from
 
@@ -46,7 +68,6 @@ router.post('/', async (req, res) => {
       const response = message.text.body.trim().toUpperCase()
 
       if (response === 'OK' || response === 'NO') {
-        // Buscar el pago pendiente más reciente
         const { data: pending } = await supabase
           .from('pending_payments')
           .select('*')
@@ -94,18 +115,36 @@ router.post('/', async (req, res) => {
 
       await sendMessage(from, '⏳ Recibí tu comprobante, estoy verificando el pago. Dame un momento...')
 
-      const analisis = await analyzePaymentProof(message.image.id)
+      await analyzePaymentProof(message.image.id)
 
-      // Guardar pago pendiente
+      // Obtener resumen del pedido desde historial
+      const { data: recentHistory } = await supabase
+        .from('conversations')
+        .select('role, message')
+        .eq('customer_id', customerId || '00000000-0000-0000-0000-000000000000')
+        .order('created_at', { ascending: false })
+        .limit(20)
+
+      const orderSummary = (recentHistory || [])
+        .filter(h => h.role === 'assistant')
+        .map(h => h.message)
+        .find(m => m.includes('$') || m.toLowerCase().includes('total') || m.toLowerCase().includes('pedido'))
+        || 'No se pudo extraer el resumen del pedido.'
+
+      // Guardar pago pendiente con detalle
       await supabase
         .from('pending_payments')
-        .insert({ business_id: business?.id, customer_phone: from })
+        .insert({
+          business_id: business?.id,
+          customer_phone: from,
+          order_details: orderSummary
+        })
 
       // Notificar al dueño
       if (business?.owner_phone) {
         await sendMessage(
           business.owner_phone,
-          `💰 Comprobante de pago recibido:\nCliente: +${from}\n\nResponde OK para confirmar o NO para rechazar.`
+          `💰 Comprobante recibido\n\nCliente: +${from}\n\n📋 Resumen del pedido:\n${orderSummary}\n\nResponde OK para confirmar o NO para rechazar.`
         )
       }
       return
@@ -120,28 +159,6 @@ router.post('/', async (req, res) => {
       console.log('Audio recibido, transcribiendo...')
       userText = await transcribeAudio(message.audio.id)
       console.log('Transcripción:', userText)
-    }
-
-    // Buscar o crear cliente
-    let customerId = null
-    if (business) {
-      const { data: existingCustomer } = await supabase
-        .from('customers')
-        .select('id')
-        .eq('business_id', business.id)
-        .eq('phone_number', from)
-        .single()
-
-      if (existingCustomer) {
-        customerId = existingCustomer.id
-      } else {
-        const { data: newCustomer } = await supabase
-          .from('customers')
-          .insert({ business_id: business.id, phone_number: from })
-          .select('id')
-          .single()
-        customerId = newCustomer.id
-      }
     }
 
     // Historial de conversación
