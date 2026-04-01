@@ -62,6 +62,35 @@ router.post('/', async (req, res) => {
       }
     }
 
+    // Buscar orden activa del cliente
+    const { data: activeOrder } = await supabase
+      .from('orders')
+      .select('*')
+      .eq('business_id', business?.id)
+      .eq('customer_phone', from)
+      .in('status', ['pending_payment', 'in_preparation'])
+      .order('created_at', { ascending: false })
+      .limit(1)
+      .single()
+
+    // Auto-marcar como entregado si pasaron 45 minutos en preparacion
+    if (activeOrder?.status === 'in_preparation') {
+      const minutesElapsed = (Date.now() - new Date(activeOrder.created_at).getTime()) / (1000 * 60)
+      if (minutesElapsed >= 45) {
+        await supabase
+          .from('orders')
+          .update({ status: 'delivered', delivered_at: new Date().toISOString() })
+          .eq('id', activeOrder.id)
+
+        await supabase
+          .from('conversations')
+          .delete()
+          .eq('customer_id', customerId)
+
+        activeOrder.status = 'delivered'
+      }
+    }
+
     // Detectar si quien escribe es el dueño
     const isOwner = business?.owner_phone === from
 
@@ -70,10 +99,10 @@ router.post('/', async (req, res) => {
 
       if (response === 'OK' || response === 'NO') {
         const { data: pending } = await supabase
-          .from('pending_payments')
+          .from('orders')
           .select('*')
           .eq('business_id', business.id)
-          .eq('status', 'pending')
+          .eq('status', 'pending_payment')
           .order('created_at', { ascending: true })
           .limit(1)
           .single()
@@ -85,41 +114,34 @@ router.post('/', async (req, res) => {
 
         if (response === 'OK') {
           await supabase
-            .from('pending_payments')
-            .update({ status: 'confirmed' })
+            .from('orders')
+            .update({ status: 'in_preparation' })
             .eq('id', pending.id)
 
-          // Buscar customerId del cliente para limpiar historial
-          const { data: confirmedCustomer } = await supabase
+          await sendMessage(
+            pending.customer_phone,
+            '✅ ¡Tu pago fue confirmado! Tu pedido está en preparación. En breve te lo llevamos. 🍔🔥'
+          )
+          await sendMessage(from, `✅ Pago confirmado. Pedido en preparación. Cliente +${pending.customer_phone} fue notificado.`)
+        } else {
+          await supabase
+            .from('orders')
+            .update({ status: 'delivered' })
+            .eq('id', pending.id)
+
+          const { data: rejectedCustomer } = await supabase
             .from('customers')
             .select('id')
             .eq('business_id', business.id)
             .eq('phone_number', pending.customer_phone)
             .single()
 
-          // Limpiar historial para que el próximo pedido sea fresh
-          if (confirmedCustomer) {
+          if (rejectedCustomer) {
             await supabase
               .from('conversations')
               .delete()
-              .eq('customer_id', confirmedCustomer.id)
-
-            await supabase
-              .from('customers')
-              .update({ last_interaction: null })
-              .eq('id', confirmedCustomer.id)
+              .eq('customer_id', rejectedCustomer.id)
           }
-
-          await sendMessage(
-            pending.customer_phone,
-            '✅ ¡Tu pago fue confirmado! Tu pedido está en preparación. En breve te lo llevamos. 🍔🔥'
-          )
-          await sendMessage(from, `✅ Pago confirmado. Cliente +${pending.customer_phone} fue notificado.`)
-        } else {
-          await supabase
-            .from('pending_payments')
-            .update({ status: 'rejected' })
-            .eq('id', pending.id)
 
           await sendMessage(
             pending.customer_phone,
@@ -134,6 +156,12 @@ router.post('/', async (req, res) => {
     // Manejar imagen
     if (message.type === 'image') {
       console.log('Imagen recibida, analizando...')
+
+      // Evitar duplicado si ya hay un pago pendiente
+      if (activeOrder?.status === 'pending_payment') {
+        await sendMessage(from, '⏳ Ya tenemos tu comprobante en revisión. Espera la confirmación.')
+        return
+      }
 
       await sendMessage(from, '⏳ Recibí tu comprobante, estoy verificando el pago. Dame un momento...')
 
@@ -158,12 +186,15 @@ router.post('/', async (req, res) => {
         ? orderMessage.substring(0, 300) + '...'
         : orderMessage
 
+      // Crear orden
       await supabase
-        .from('pending_payments')
+        .from('orders')
         .insert({
           business_id: business?.id,
           customer_phone: from,
-          order_details: orderSummary
+          customer_id: customerId,
+          order_details: orderSummary,
+          status: 'pending_payment'
         })
 
       if (business?.owner_phone) {
@@ -202,16 +233,6 @@ router.post('/', async (req, res) => {
       console.log('Transcripción:', userText)
     }
 
-    // Verificar estado del último pago
-    const { data: lastPayment } = await supabase
-      .from('pending_payments')
-      .select('status, order_details, created_at')
-      .eq('business_id', business?.id)
-      .eq('customer_phone', from)
-      .order('created_at', { ascending: false })
-      .limit(1)
-      .single()
-
     // Verificar tiempo desde última interacción
     const { data: customerRecord } = await supabase
       .from('customers')
@@ -227,7 +248,6 @@ router.post('/', async (req, res) => {
       ? (Date.now() - lastInteraction.getTime()) / (1000 * 60 * 60)
       : 999
 
-    // Actualizar last_interaction
     if (customerId) {
       await supabase
         .from('customers')
@@ -235,18 +255,19 @@ router.post('/', async (req, res) => {
         .eq('id', customerId)
     }
 
-    let paymentContext = ''
-    if (lastPayment?.status === 'rejected') {
-      paymentContext = '\n\nIMPORTANTE: El último pago de este cliente fue RECHAZADO. Si el cliente insiste en que pagó, dile que contacte directamente al negocio. No confirmes ningún pedido ni digas que está en camino.'
-    } else if (lastPayment?.status === 'confirmed') {
-      paymentContext = '\n\nINFO: El último pago fue confirmado y el historial fue reiniciado. Trata este mensaje como inicio de conversación nueva.'
-    } else if (lastPayment?.status === 'pending') {
-      paymentContext = '\n\nIMPORTANTE: El cliente tiene un pago pendiente de verificación. Dile que espere la confirmación antes de hacer otro pedido.'
+    // Construir contexto según estado de la orden activa
+    let orderContext = ''
+    if (activeOrder?.status === 'in_preparation') {
+      orderContext = `\n\nESTADO ACTUAL: El cliente tiene un pedido EN PREPARACIÓN con los siguientes detalles:\n${activeOrder.order_details}\nEl pedido fue confirmado y está siendo preparado. Si el cliente pregunta por su pedido, infórmale que está en preparación y llegará pronto. NO pidas dirección ni datos de pago de nuevo.`
+    } else if (activeOrder?.status === 'pending_payment') {
+      orderContext = `\n\nESTADO ACTUAL: El cliente tiene un comprobante de pago PENDIENTE de verificación. Dile que espere la confirmación del negocio. NO aceptes un nuevo pedido hasta que este sea resuelto.`
+    } else if (!activeOrder || activeOrder?.status === 'delivered') {
+      orderContext = '\n\nESTADO ACTUAL: No hay pedidos activos. El cliente puede hacer un pedido nuevo.'
     }
 
     const businessContext = (business
       ? business.ai_context
-      : 'Eres un asistente general. El negocio aún no ha configurado su información.') + paymentContext
+      : 'Eres un asistente general. El negocio aún no ha configurado su información.') + orderContext
 
     // Historial: vacío si pasaron más de 8 horas
     const useHistory = hoursElapsed <= 8
