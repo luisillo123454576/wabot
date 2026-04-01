@@ -63,7 +63,7 @@ router.post('/', async (req, res) => {
     }
 
     // Buscar orden activa del cliente
-    const { data: activeOrder } = await supabase
+    let { data: activeOrder } = await supabase
       .from('orders')
       .select('*')
       .eq('business_id', business?.id)
@@ -87,7 +87,7 @@ router.post('/', async (req, res) => {
           .delete()
           .eq('customer_id', customerId)
 
-        activeOrder.status = 'delivered'
+        activeOrder = null
       }
     }
 
@@ -157,7 +157,6 @@ router.post('/', async (req, res) => {
     if (message.type === 'image') {
       console.log('Imagen recibida, analizando...')
 
-      // Evitar duplicado si ya hay un pago pendiente
       if (activeOrder?.status === 'pending_payment') {
         await sendMessage(from, '⏳ Ya tenemos tu comprobante en revisión. Espera la confirmación.')
         return
@@ -186,7 +185,6 @@ router.post('/', async (req, res) => {
         ? orderMessage.substring(0, 300) + '...'
         : orderMessage
 
-      // Crear orden
       await supabase
         .from('orders')
         .insert({
@@ -258,27 +256,34 @@ router.post('/', async (req, res) => {
     // Construir contexto según estado de la orden activa
     let orderContext = ''
     if (activeOrder?.status === 'in_preparation') {
-      orderContext = `\n\nESTADO ACTUAL: El cliente tiene un pedido EN PREPARACIÓN con los siguientes detalles:\n${activeOrder.order_details}\nEl pedido fue confirmado y está siendo preparado. Si el cliente pregunta por su pedido, infórmale que está en preparación y llegará pronto. NO pidas dirección ni datos de pago de nuevo.`
+      orderContext = `\n\nESTADO ACTUAL: PEDIDO EN PREPARACIÓN.
+Detalles: ${activeOrder.order_details}
+El pago fue confirmado y el pedido está siendo preparado ahora mismo.
+INSTRUCCIÓN ESTRICTA: Responde SOLO sobre el estado del pedido. Sé cálido y tranquiliza al cliente. Usa frases como "ya estamos preparando tu pedido con todo el cariño", "nuestro equipo está en ello", "en breve llega caliente a tu puerta". NO pidas dirección ni datos de pago. NO ofrezcas nuevo pedido. NO uses el historial de conversación anterior.`
     } else if (activeOrder?.status === 'pending_payment') {
-      orderContext = `\n\nESTADO ACTUAL: El cliente tiene un comprobante de pago PENDIENTE de verificación. Dile que espere la confirmación del negocio. NO aceptes un nuevo pedido hasta que este sea resuelto.`
-    } else if (!activeOrder || activeOrder?.status === 'delivered') {
-      orderContext = '\n\nESTADO ACTUAL: No hay pedidos activos. El cliente puede hacer un pedido nuevo.'
+      orderContext = `\n\nESTADO ACTUAL: PAGO PENDIENTE DE VERIFICACIÓN.
+INSTRUCCIÓN ESTRICTA: Dile al cliente que su comprobante está siendo revisado y que en breve recibe confirmación. NO aceptes nuevo pedido. NO pidas datos adicionales.`
+    } else {
+      orderContext = '\n\nESTADO ACTUAL: Sin pedidos activos. El cliente puede hacer un pedido nuevo.'
     }
 
     const businessContext = (business
       ? business.ai_context
       : 'Eres un asistente general. El negocio aún no ha configurado su información.') + orderContext
 
-    // Historial: vacío si pasaron más de 8 horas
-    const useHistory = hoursElapsed <= 8
-    const { data: history } = useHistory
-      ? await supabase
+    // Bloquear historial si hay orden activa o pasaron más de 8 horas
+    const blockHistory = activeOrder?.status === 'in_preparation' ||
+                         activeOrder?.status === 'pending_payment' ||
+                         hoursElapsed > 8
+
+    const { data: history } = blockHistory
+      ? { data: [] }
+      : await supabase
           .from('conversations')
           .select('role, message')
           .eq('customer_id', customerId || '00000000-0000-0000-0000-000000000000')
           .order('created_at', { ascending: true })
           .limit(10)
-      : { data: [] }
 
     const conversationHistory = (history || []).map(h => ({
       role: h.role,
