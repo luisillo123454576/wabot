@@ -1,5 +1,6 @@
 const { Router } = require('express')
 const router = Router()
+const axios = require('axios')
 const { getAIResponse } = require('../services/ai')
 const { sendMessage } = require('../services/whatsapp')
 const supabase = require('../services/supabase')
@@ -125,11 +126,17 @@ router.post('/', async (req, res) => {
         .order('created_at', { ascending: false })
         .limit(20)
 
-      const orderSummary = (recentHistory || [])
+      const allAssistantMessages = (recentHistory || [])
         .filter(h => h.role === 'assistant')
         .map(h => h.message)
-        .find(m => m.includes('$') || m.toLowerCase().includes('total') || m.toLowerCase().includes('pedido'))
-        || 'No se pudo extraer el resumen del pedido.'
+
+      const orderMessage = allAssistantMessages.find(m =>
+        m.includes('total') || m.includes('Total') || m.includes('$')
+      ) || allAssistantMessages[0] || 'Sin resumen disponible.'
+
+      const orderSummary = orderMessage.length > 300
+        ? orderMessage.substring(0, 300) + '...'
+        : orderMessage
 
       // Guardar pago pendiente con detalle
       await supabase
@@ -140,11 +147,27 @@ router.post('/', async (req, res) => {
           order_details: orderSummary
         })
 
-      // Notificar al dueño
+      // Notificar al dueño con imagen y resumen
       if (business?.owner_phone) {
+        await axios.post(
+          `https://graph.facebook.com/v22.0/${process.env.WHATSAPP_PHONE_ID}/messages`,
+          {
+            messaging_product: 'whatsapp',
+            to: business.owner_phone,
+            type: 'image',
+            image: { id: message.image.id }
+          },
+          {
+            headers: {
+              Authorization: `Bearer ${process.env.WHATSAPP_TOKEN}`,
+              'Content-Type': 'application/json'
+            }
+          }
+        )
+
         await sendMessage(
           business.owner_phone,
-          `💰 Comprobante recibido\n\nCliente: +${from}\n\n📋 Resumen del pedido:\n${orderSummary}\n\nResponde OK para confirmar o NO para rechazar.`
+          `💰 Comprobante recibido\nCliente: +${from}\n\n📋 Pedido:\n${orderSummary}\n\nResponde OK para confirmar o NO para rechazar.`
         )
       }
       return
