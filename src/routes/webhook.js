@@ -231,6 +231,32 @@ router.post('/', async (req, res) => {
       console.log('Transcripción:', userText)
     }
 
+    // Detectar si cliente confirma entrega cuando hay orden en preparacion
+    if (activeOrder?.status === 'in_preparation') {
+      const detectionResponse = await getAIResponse(
+        'Eres un detector de intenciones. Responde SOLO con "SI" o "NO" sin ningún texto adicional.',
+        [],
+        `¿Este mensaje indica que el cliente ya recibió su pedido o que el pedido ya llegó? Mensaje: "${userText}"`
+      )
+
+      if (detectionResponse.trim().toUpperCase() === 'SI') {
+        await supabase
+          .from('orders')
+          .update({ status: 'delivered', delivered_at: new Date().toISOString() })
+          .eq('id', activeOrder.id)
+
+        await supabase
+          .from('conversations')
+          .delete()
+          .eq('customer_id', customerId)
+
+        activeOrder = null
+
+        await sendMessage(from, '¡Perfecto! Nos alegra que hayas recibido tu pedido. ¡Buen provecho! 🍔🔥 Cuando quieras pedir de nuevo aquí estamos.')
+        return
+      }
+    }
+
     // Verificar tiempo desde última interacción
     const { data: customerRecord } = await supabase
       .from('customers')
