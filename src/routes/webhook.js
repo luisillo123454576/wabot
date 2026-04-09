@@ -33,14 +33,12 @@ router.post('/', async (req, res) => {
     const from = message.from
     const phoneNumberId = change.metadata.phone_number_id
 
-    // Buscar negocio
     const { data: business } = await supabase
       .from('businesses')
       .select('*')
       .eq('phone_number', phoneNumberId)
       .single()
 
-    // Buscar o crear cliente
     let customerId = null
     if (business) {
       const { data: existingCustomer } = await supabase
@@ -55,14 +53,17 @@ router.post('/', async (req, res) => {
       } else {
         const { data: newCustomer } = await supabase
           .from('customers')
-          .insert({ business_id: business.id, phone_number: from, last_interaction: new Date().toISOString() })
+          .insert({
+            business_id: business.id,
+            phone_number: from,
+            last_interaction: new Date().toISOString()
+          })
           .select('id')
           .single()
         customerId = newCustomer.id
       }
     }
 
-    // Buscar orden activa del cliente
     let { data: activeOrder } = await supabase
       .from('orders')
       .select('*')
@@ -73,7 +74,6 @@ router.post('/', async (req, res) => {
       .limit(1)
       .single()
 
-    // Auto-marcar como entregado si pasaron 45 minutos en preparacion
     if (activeOrder?.status === 'in_preparation') {
       const minutesElapsed = (Date.now() - new Date(activeOrder.created_at).getTime()) / (1000 * 60)
       if (minutesElapsed >= 45) {
@@ -91,7 +91,6 @@ router.post('/', async (req, res) => {
       }
     }
 
-    // Detectar si quien escribe es el dueño
     const isOwner = business?.owner_phone === from
 
     if (isOwner && message.type === 'text') {
@@ -153,7 +152,6 @@ router.post('/', async (req, res) => {
       }
     }
 
-    // Manejar imagen
     if (message.type === 'image') {
       console.log('Imagen recibida, analizando...')
 
@@ -220,7 +218,6 @@ router.post('/', async (req, res) => {
       return
     }
 
-    // Manejar texto y audio
     let userText = ''
 
     if (message.type === 'text') {
@@ -231,7 +228,6 @@ router.post('/', async (req, res) => {
       console.log('Transcripción:', userText)
     }
 
-    // Detectar si cliente confirma entrega cuando hay orden en preparacion
     if (activeOrder?.status === 'in_preparation') {
       const detectionResponse = await getAIResponse(
         'Eres un detector de intenciones. Responde SOLO con "SI" o "NO" sin ningún texto adicional.',
@@ -257,7 +253,6 @@ router.post('/', async (req, res) => {
       }
     }
 
-    // Verificar tiempo desde última interacción
     const { data: customerRecord } = await supabase
       .from('customers')
       .select('last_interaction')
@@ -279,13 +274,12 @@ router.post('/', async (req, res) => {
         .eq('id', customerId)
     }
 
-    // Construir contexto según estado de la orden activa
     let orderContext = ''
     if (activeOrder?.status === 'in_preparation') {
       orderContext = `\n\nESTADO ACTUAL: PEDIDO EN PREPARACIÓN.
 Detalles: ${activeOrder.order_details}
 El pago fue confirmado y el pedido está siendo preparado ahora mismo.
-INSTRUCCIÓN ESTRICTA: Responde SOLO sobre el estado del pedido. Sé cálido y tranquiliza al cliente. Usa frases como "ya estamos preparando tu pedido con todo el cariño", "nuestro equipo está en ello", "en breve llega caliente a tu puerta". NO pidas dirección ni datos de pago. NO ofrezcas nuevo pedido. NO uses el historial de conversación anterior.`
+INSTRUCCIÓN ESTRICTA: Responde SOLO sobre el estado del pedido. Sé cálido y tranquiliza al cliente. Usa frases como "ya estamos preparando tu pedido con todo el cariño", "nuestro equipo está en ello", "en breve llega caliente a tu puerta". NO pidas dirección ni datos de pago. NO ofrezcas nuevo pedido.`
     } else if (activeOrder?.status === 'pending_payment') {
       orderContext = `\n\nESTADO ACTUAL: PAGO PENDIENTE DE VERIFICACIÓN.
 INSTRUCCIÓN ESTRICTA: Dile al cliente que su comprobante está siendo revisado y que en breve recibe confirmación. NO aceptes nuevo pedido. NO pidas datos adicionales.`
@@ -297,19 +291,22 @@ INSTRUCCIÓN ESTRICTA: Dile al cliente que su comprobante está siendo revisado 
       ? business.ai_context
       : 'Eres un asistente general. El negocio aún no ha configurado su información.') + orderContext
 
-    // Bloquear historial si hay orden activa o pasaron más de 8 horas
+    // Bloquear historial SOLO cuando hay orden activa confirmada
+    // Durante el flujo de toma de pedido el historial siempre fluye
     const blockHistory = activeOrder?.status === 'in_preparation' ||
-                         activeOrder?.status === 'pending_payment' ||
-                         hoursElapsed > 8
+                         activeOrder?.status === 'pending_payment'
 
-    const { data: history } = blockHistory
+    // Reset de sesión solo si pasaron más de 4 horas Y no hay orden activa
+    const resetSession = hoursElapsed > 4 && !blockHistory
+
+    const { data: history } = (blockHistory || resetSession)
       ? { data: [] }
       : await supabase
           .from('conversations')
           .select('role, message')
           .eq('customer_id', customerId || '00000000-0000-0000-0000-000000000000')
           .order('created_at', { ascending: true })
-          .limit(10)
+          .limit(15)
 
     const conversationHistory = (history || []).map(h => ({
       role: h.role,
