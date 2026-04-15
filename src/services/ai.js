@@ -62,6 +62,25 @@ Si no puedes identificar el producto responde:
     return { producto: null, cantidad: 0 }
   }
 }
+// NUEVA Función: Validar si el texto es una dirección (IA como Fallback)
+async function isValidAddress(userMessage) {
+  const response = await groq.chat.completions.create({
+    model: 'llama-3.1-8b-instant',
+    max_tokens: 10,
+    messages: [
+      {
+        role: 'system',
+        content: 'Eres un validador de direcciones. Responde "SI" si el texto parece una dirección de entrega, punto de referencia o lugar. Responde "NO" si es un comentario, duda o saludo.'
+      },
+      {
+        role: 'user',
+        content: `¿Es esto una dirección?: "${userMessage}"`
+      }
+    ]
+  })
+  const result = response.choices[0].message.content.trim().toUpperCase()
+  return result.includes('SI')
+}
 
 // Función 3: respuesta libre para preguntas fuera del flujo
 async function generateFreeResponse(businessContext, userMessage, currentState = null, stateData = null) {
@@ -113,4 +132,4 @@ async function generateFreeResponse(businessContext, userMessage, currentState =
   return response.choices[0].message.content.trim()
 }
 
-module.exports = { classifyIntent, extractOrderItems, generateFreeResponse }
+module.exports = { classifyIntent, extractOrderItems, generateFreeResponse, isValidAddress }

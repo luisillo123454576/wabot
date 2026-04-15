@@ -33,10 +33,11 @@ function formatMenu(products) {
 
 function formatCart(items) {
   if (!items || items.length === 0) return 'Tu carrito está vacío.'
+  
+  // Solo devuelve las líneas de los productos
   const lines = items.map(i => `• ${i.quantity}x ${i.name} — $${Number(i.subtotal).toLocaleString('es-CO')}`)
-  const total = items.reduce((acc, i) => acc + i.subtotal, 0)
-  lines.push(`\nTotal: $${Number(total).toLocaleString('es-CO')}`)
-  return lines.join('\n')
+  
+  return lines.join('\n') // Ya no agregamos la línea del "Total" aquí
 }
 
 // Variación de respuestas para sonar natural
@@ -199,55 +200,77 @@ async function handleArmandoPedido(customer, business, userMessage, sendMessage)
 }
 
 async function handleEsperandoDireccion(customer, business, userMessage, sendMessage) {
-  const intent = await classifyIntent('ESPERANDO_DIRECCION', userMessage)
-
+  const text = userMessage.trim();
+  
+  // 1. FILTRO DE INTENCIÓN (Para no procesar una cancelación como dirección)
+  const intent = await classifyIntent('ESPERANDO_DIRECCION', text);
   if (intent === 'CANCELAR') {
-    await updateCustomerState(customer.id, 'NUEVO', {})
-    await sendMessage(customer.phone_number, 'Pedido cancelado. ¡Cuando quieras volvemos! 👋')
-    return
+    await updateCustomerState(customer.id, 'NUEVO', {});
+    return await sendMessage(customer.phone_number, 'Pedido cancelado. ¡Cuando quieras volvemos! 👋');
   }
 
-  const stateData = customer.state_data || { items: [] }
-  const items = stateData.items || []
-  const subtotal = items.reduce((acc, i) => acc + i.subtotal, 0)
-  
-  // ─── LÓGICA DE DOMICILIO ───
-  const costoDomicilio = 3000 
-  const totalFinal = subtotal + costoDomicilio
+  // 2. SCORE HEURÍSTICO (Heurística rápida sin IA)
+  const addressRegex = /(calle|cll|cl|carrera|cra|cr|diagonal|dg|transversal|tv|avenida|av|barrio|br|mz|manzana|casa|lote|sector|apto|piso|esquina|entre)\s?\d+|[#\-\d]{3,}/i;
+  let score = 0;
+  if (addressRegex.test(text)) score += 60; 
+  if (text.length > 12) score += 20;         
+  if (/\d+/.test(text)) score += 20;
 
-  // Crear order en base de datos con el total real
-  const { data: order } = await supabase
-    .from('orders')
-    .insert({
-      business_id: business.id,
-      customer_id: customer.id,
-      items,
+  // 3. TOMA DE DECISIÓN
+  let esDireccionReal = false;
+
+  if (score >= 80) {
+    esDireccionReal = true; // Certeza por Heurística
+  } else if (score >= 20) {
+    // Si hay duda (ej: "Frente al parque Coquivacoa"), usamos la IA como Fallback
+    esDireccionReal = await isValidAddress(text);
+  }
+
+  // --- EJECUCIÓN ---
+
+  if (esDireccionReal) {
+    // SI ES DIRECCIÓN -> Procedemos a crear la orden (tu lógica original)
+    const stateData = customer.state_data || { items: [] };
+    const items = stateData.items || [];
+    const subtotal = items.reduce((acc, i) => acc + i.subtotal, 0);
+    const costoDomicilio = 3000;
+    const totalFinal = subtotal + costoDomicilio;
+
+    const { data: order } = await supabase
+      .from('orders')
+      .insert({
+        business_id: business.id,
+        customer_id: customer.id,
+        items,
+        total: totalFinal,
+        delivery_address: text,
+        state: 'PENDIENTE'
+      })
+      .select().single();
+
+    await updateCustomerState(customer.id, 'ESPERANDO_PAGO', { 
+      order_id: order.id, 
+      items, 
       total: totalFinal,
-      delivery_address: userMessage,
-      state: 'PENDIENTE'
-    })
-    .select()
-    .single()
+      address: text 
+    });
 
-  // Guardamos todo en el estado del cliente, incluyendo la dirección
-  await updateCustomerState(customer.id, 'ESPERANDO_PAGO', { 
-    order_id: order.id, 
-    items, 
-    total: totalFinal,
-    address: userMessage 
-  })
+    const mensajePago = `📍 *Dirección guardada:* ${text}\n\n` +
+      `🛒 *Resumen:*\n${formatCart(items)}\n` +
+      `🚚 *Domicilio:* $3.000\n` +
+      `💰 *TOTAL A PAGAR:* $${totalFinal.toLocaleString('es-CO')}\n\n` +
+      `💳 *Paga por Nequi:* ${business.payment_info || '3235949088'}\n\n` +
+      `Por favor, envía la *imagen del comprobante* para confirmar tu pedido. 📲`;
 
-  // ─── MENSAJE CON DATOS REALES DE PAGO ───
-  const mensajePago = `📍 *Dirección guardada:* ${userMessage}\n\n` +
-    `🛒 *Resumen:*\n${formatCart(items)}\n` +
-    `🚚 *Domicilio:* $${costoDomicilio.toLocaleString('es-CO')}\n` +
-    `💰 *TOTAL A PAGAR:* $${totalFinal.toLocaleString('es-CO')}\n\n` +
-    `💳 *Paga por Nequi:* ${business.payment_info || '3235949088'}\n\n` +
-    `Por favor, envía la *imagen del comprobante* para confirmar tu pedido. 📲`
+    await sendMessage(customer.phone_number, mensajePago);
 
-  await sendMessage(customer.phone_number, mensajePago)
+  } else {
+    // NO ES DIRECCIÓN -> Dejamos que la IA responda la duda o comentario
+    // SIN crear orden y SIN cambiar de estado
+    const reply = await generateFreeResponse(business.ai_context, text, 'ESPERANDO_DIRECCION', customer.state_data);
+    await sendMessage(customer.phone_number, reply);
+  }
 }
-
 async function handleEsperandoPago(customer, business, userMessage, hasMedia, sendMessage) {
   const intent = await classifyIntent('ESPERANDO_PAGO', userMessage)
 
