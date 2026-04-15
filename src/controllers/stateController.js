@@ -87,7 +87,7 @@ async function handleMenuEnviado(customer, business, userMessage, sendMessage) {
   }
 
   if (intent === 'PREGUNTA_LIBRE') {
-    const reply = await generateFreeResponse(business.ai_context, userMessage)
+    const reply = await generateFreeResponse(business.ai_context, userMessage, customer.state, customer.state_data)
     await sendMessage(customer.phone_number, reply)
     return
   }
@@ -329,14 +329,14 @@ async function handleValidandoPago(customer, business, userMessage, sendMessage)
 async function handleEnPreparacion(customer, business, userMessage, sendMessage) {
   // El cliente escribió mientras cocinan. 
   // NO usamos updateCustomerState. Solo respondemos con IA.
-  const reply = await generateFreeResponse(business.ai_context, userMessage);
+  const reply = await generateFreeResponse(business.ai_context, userMessage, customer.state, customer.state_data)
   await sendMessage(customer.phone_number, reply);
 }
 
 async function handleEnCamino(customer, business, userMessage, sendMessage) {
   // El cliente escribió mientras el repartidor va hacia allá.
   // NO usamos updateCustomerState. Solo respondemos con IA.
-  const reply = await generateFreeResponse(business.ai_context, userMessage);
+  const reply = await generateFreeResponse(business.ai_context, userMessage, customer.state, customer.state_data)
   await sendMessage(customer.phone_number, reply);
 }
 
@@ -348,14 +348,14 @@ async function handleEntregado(customer, business, userMessage, sendMessage) {
   if (intent === 'HACER_PEDIDO') {
       await handleNuevo(customer, business, sendMessage);
   } else {
-      const reply = await generateFreeResponse(business.ai_context, userMessage);
+      const reply = await generateFreeResponse(business.ai_context, userMessage, customer.state, customer.state_data)
       await sendMessage(customer.phone_number, reply);
   }
 }
 // ─── ESTADOS GLOBALES ─────────────────────────────────────────────────────────
 
 async function handleAtencionInteligente(customer, business, userMessage, sendMessage) {
-  const reply = await generateFreeResponse(business.ai_context, userMessage)
+  const reply = await generateFreeResponse(business.ai_context, userMessage, customer.state, customer.state_data)
   await sendMessage(customer.phone_number, reply)
   // Regresar al estado anterior
   if (customer.previous_state) {
@@ -427,7 +427,7 @@ async function handleState(customer, business, userMessage, hasMedia, sendMessag
 
     case 'VALIDANDO_PAGO':
       // Si el cliente escribe mientras el dueño revisa el Nequi
-      const replyValidando = await generateFreeResponse(business.ai_context, userMessage);
+      const reply = await generateFreeResponse(business.ai_context, userMessage, customer.state, customer.state_data)
       await sendMessage(customer.phone_number, replyValidando);
       break
 

@@ -64,18 +64,42 @@ Si no puedes identificar el producto responde:
 }
 
 // Función 3: respuesta libre para preguntas fuera del flujo
-async function generateFreeResponse(businessContext, userMessage) {
+async function generateFreeResponse(businessContext, userMessage, currentState = null, stateData = null) {
+  
+  // Contexto del estado actual para que la IA sepa dónde está parada
+  let stateContext = ''
+  
+  if (currentState) {
+    const stateDescriptions = {
+      'MENU_ENVIADO': 'El cliente acaba de recibir el menú y está decidiendo qué pedir.',
+      'ARMANDO_PEDIDO': `El cliente está armando su pedido. Carrito actual: ${stateData?.items?.length > 0 ? stateData.items.map(i => `${i.quantity}x ${i.name}`).join(', ') : 'vacío'}.`,
+      'ESPERANDO_DIRECCION': 'El cliente ya confirmó su pedido y está a punto de dar su dirección de entrega.',
+      'ESPERANDO_PAGO': `El cliente debe enviar el comprobante de pago. Total a cobrar: $${(stateData?.total || 0).toLocaleString('es-CO')}.`,
+      'VALIDANDO_PAGO': 'El cliente ya envió el comprobante y está esperando confirmación del negocio.',
+      'EN_PREPARACION': 'El pedido del cliente ya fue confirmado y está siendo preparado en cocina.',
+      'EN_CAMINO': 'El pedido ya salió a domicilio y está en camino al cliente.',
+      'ENTREGADO': 'El pedido fue entregado. El cliente puede querer hacer un nuevo pedido o dar feedback.'
+    }
+    
+    stateContext = stateDescriptions[currentState] 
+      ? `\nCONTEXTO ACTUAL: ${stateDescriptions[currentState]}` 
+      : ''
+  }
+
   const response = await groq.chat.completions.create({
     model: 'llama-3.1-8b-instant',
     max_tokens: 200,
     messages: [
       {
         role: 'system',
-        content: `Eres el asistente de WhatsApp de un negocio. 
-Responde en español informal y natural.
-Sé conciso, máximo 3 líneas.
-Si no sabes algo di "eso lo confirmo con el equipo enseguida".
-Nunca inventes precios ni confirmes pedidos.
+        content: `Eres el asistente de apoyo de un negocio en WhatsApp. 
+Tu rol es responder preguntas puntuales que el cliente hace durante el proceso de compra.
+NO eres el encargado del flujo del pedido — eso lo maneja el sistema automáticamente.
+NO confirmes pedidos, NO cambies precios, NO inventes información.
+Si no sabes algo, di "eso lo confirmo con el equipo enseguida".
+Responde en español informal y natural, máximo 2 líneas.
+${stateContext}
+
 Información del negocio:
 ${businessContext}`
       },
