@@ -426,9 +426,9 @@ async function handleState(customer, business, userMessage, hasMedia, sendMessag
       break
 
     case 'VALIDANDO_PAGO':
-      // Si el cliente escribe mientras el dueño revisa el Nequi
-      const reply = await generateFreeResponse(business.ai_context, userMessage, customer.state, customer.state_data)
-      await sendMessage(customer.phone_number, replyValidando);
+      // El nombre de la variable aquí debe ser igual al de abajo
+      const reply = await generateFreeResponse(business.ai_context, userMessage, customer.state, customer.state_data);
+      await sendMessage(customer.phone_number, reply); // <--- Aquí quítale el "Validando"
       break
 
     case 'PEDIDO_CONFIRMADO':
