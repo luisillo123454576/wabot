@@ -426,14 +426,14 @@ async function handleState(customer, business, userMessage, hasMedia, sendMessag
       break
 
     case 'VALIDANDO_PAGO':
-      await handleValidandoPago(customer, business, userMessage, sendMessage)
+      // Si el cliente escribe mientras el dueño revisa el Nequi
+      const replyValidando = await generateFreeResponse(business.ai_context, userMessage);
+      await sendMessage(customer.phone_number, replyValidando);
       break
 
     case 'PEDIDO_CONFIRMADO':
-      await handlePedidoConfirmado(customer, business, userMessage, sendMessage)
-      break
-
     case 'EN_PREPARACION':
+      // Ambos estados ahora usan la función que creamos para cuando están cocinando
       await handleEnPreparacion(customer, business, userMessage, sendMessage)
       break
 
@@ -442,8 +442,8 @@ async function handleState(customer, business, userMessage, hasMedia, sendMessag
       break
 
     case 'ENTREGADO':
-      await updateCustomerState(customer.id, 'NUEVO', {})
-      await handleNuevo(customer, business, sendMessage)
+      // Usamos la función inteligente que evita el menú automático
+      await handleEntregado(customer, business, userMessage, sendMessage)
       break
 
     case 'CANCELADO':
