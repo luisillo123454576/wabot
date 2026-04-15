@@ -404,25 +404,47 @@ async function handleErrorFlujo(customer, business, sendMessage) {
 async function handleState(customer, business, userMessage, hasMedia, sendMessage) {
   const state = customer.state || 'NUEVO'
 
+  // --- 1. FILTRO DE SEGURIDAD: CLASIFICAR ANTES DE ACTUAR ---
+  const intent = await classifyIntent(state, userMessage);
+
+  // Si el cliente quiere CANCELAR o ver el MENU, no importa en qué estado esté,
+  // le hacemos caso al comando, no a la IA.
+  if (intent === 'CANCELAR') {
+      await updateCustomerState(customer.id, 'NUEVO', {});
+      return await sendMessage(customer.phone_number, "Pedido cancelado. ¿En qué puedo ayudarte ahora?");
+  }
+  
+  if (intent === 'VER_MENU' && state !== 'NUEVO') {
+      return await handleNuevo(customer, business, sendMessage);
+  }
+
+  // --- 2. EL SWITCH DE ESTADOS ---
   switch (state) {
     case 'NUEVO':
       await handleNuevo(customer, business, sendMessage)
       break
 
     case 'MENU_ENVIADO':
-      await handleMenuEnviado(customer, business, userMessage, sendMessage)
-      break
-
     case 'ARMANDO_PEDIDO':
-      await handleArmandoPedido(customer, business, userMessage, sendMessage)
-      break
-
-    case 'ESPERANDO_DIRECCION':
-      await handleEsperandoDireccion(customer, business, userMessage, sendMessage)
+      // Si la intención es PREGUNTA_LIBRE, usamos IA. 
+      // Si es HACER_PEDIDO, usamos la lógica de productos.
+      if (intent === 'PREGUNTA_LIBRE') {
+          const reply = await generateFreeResponse(business.ai_context, userMessage, state, customer.state_data);
+          await sendMessage(customer.phone_number, reply);
+      } else {
+          await handleArmandoPedido(customer, business, userMessage, sendMessage);
+      }
       break
 
     case 'ESPERANDO_PAGO':
-      await handleEsperandoPago(customer, business, userMessage, hasMedia, sendMessage)
+      // Solo si manda foto o dice que ya pagó
+      if (hasMedia || intent === 'ENVIO_COMPROBANTE') {
+          await handleEsperandoPago(customer, business, userMessage, hasMedia, sendMessage);
+      } else {
+          // Si solo está preguntando "¿dónde pago?", responde la IA cortico
+          const reply = await generateFreeResponse(business.ai_context, userMessage, state, customer.state_data);
+          await sendMessage(customer.phone_number, reply);
+      }
       break
 
     case 'VALIDANDO_PAGO':

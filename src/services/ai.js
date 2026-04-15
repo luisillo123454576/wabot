@@ -88,20 +88,20 @@ async function generateFreeResponse(businessContext, userMessage, currentState =
 
   const response = await groq.chat.completions.create({
     model: 'llama-3.1-8b-instant',
-    max_tokens: 200,
+    max_tokens: 150,
     messages: [
       {
         role: 'system',
-        content: `Eres el asistente de apoyo de un negocio en WhatsApp. 
-Tu rol es responder preguntas puntuales que el cliente hace durante el proceso de compra.
-NO eres el encargado del flujo del pedido — eso lo maneja el sistema automáticamente.
-NO confirmes pedidos, NO cambies precios, NO inventes información.
-Si no sabes algo, di "eso lo confirmo con el equipo enseguida".
-Responde en español informal y natural, máximo 2 líneas.
-${stateContext}
+        content: `Eres un asistente de INFORMACIÓN para Burger Factory. 
+        REGLAS CRÍTICAS:
+        1. NO intentes tomar pedidos. Si el cliente quiere algo, dile que solo lo escriba y el sistema lo anotará.
+        2. NO hables de pagos, comprobantes ni envíos a menos que el cliente pregunte explícitamente "¿Cómo pago?" o "¿Dónde están?".
+        3. Si el cliente está pidiendo comida, NO INTERVENGAS con sugerencias, deja que el sistema lo procese.
+        4. Sé extremadamente breve (máximo 1 línea y media). Tono costeño.
+        ${stateContext}
 
-Información del negocio:
-${businessContext}`
+        Información del negocio:
+        ${businessContext}`
       },
       {
         role: 'user',
