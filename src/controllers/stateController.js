@@ -209,29 +209,43 @@ async function handleEsperandoDireccion(customer, business, userMessage, sendMes
 
   const stateData = customer.state_data || { items: [] }
   const items = stateData.items || []
-  const total = items.reduce((acc, i) => acc + i.subtotal, 0)
+  const subtotal = items.reduce((acc, i) => acc + i.subtotal, 0)
+  
+  // ─── LÓGICA DE DOMICILIO ───
+  const costoDomicilio = 3000 
+  const totalFinal = subtotal + costoDomicilio
 
-  // Crear order en base de datos
+  // Crear order en base de datos con el total real
   const { data: order } = await supabase
     .from('orders')
     .insert({
       business_id: business.id,
       customer_id: customer.id,
       items,
-      total,
+      total: totalFinal,
       delivery_address: userMessage,
       state: 'PENDIENTE'
     })
     .select()
     .single()
 
-  await updateCustomerState(customer.id, 'ESPERANDO_PAGO', { order_id: order.id, items, total })
+  // Guardamos todo en el estado del cliente, incluyendo la dirección
+  await updateCustomerState(customer.id, 'ESPERANDO_PAGO', { 
+    order_id: order.id, 
+    items, 
+    total: totalFinal,
+    address: userMessage 
+  })
 
-  const paymentInfo = business.ai_context?.includes('Nequi') ? 'Nequi' : 'el método de pago del negocio'
+  // ─── MENSAJE CON DATOS REALES DE PAGO ───
+  const mensajePago = `📍 *Dirección guardada:* ${userMessage}\n\n` +
+    `🛒 *Resumen:*\n${formatCart(items)}\n` +
+    `🚚 *Domicilio:* $${costoDomicilio.toLocaleString('es-CO')}\n` +
+    `💰 *TOTAL A PAGAR:* $${totalFinal.toLocaleString('es-CO')}\n\n` +
+    `💳 *Paga por Nequi:* ${business.payment_info || '3235949088'}\n\n` +
+    `Por favor, envía la *imagen del comprobante* para confirmar tu pedido. 📲`
 
-  await sendMessage(customer.phone_number,
-    `📍 Dirección guardada.\n\nResumen de tu pedido:\n\n${formatCart(items)}\n\nPara confirmar envía el comprobante de pago por ${paymentInfo} 📲`
-  )
+  await sendMessage(customer.phone_number, mensajePago)
 }
 
 async function handleEsperandoPago(customer, business, userMessage, hasMedia, sendMessage) {
@@ -243,6 +257,7 @@ async function handleEsperandoPago(customer, business, userMessage, hasMedia, se
     return
   }
 
+  // Detectar el comprobante (imagen)
   if (hasMedia || intent === 'ENVIO_COMPROBANTE') {
     const stateData = customer.state_data || {}
 
@@ -253,26 +268,27 @@ async function handleEsperandoPago(customer, business, userMessage, hasMedia, se
 
     await updateCustomerState(customer.id, 'VALIDANDO_PAGO')
 
-    // Notificar al dueño
+    // Notificar al dueño con lujo de detalles
     const summary = formatCart(stateData.items || [])
     await sendMessage(business.owner_phone,
-      `🔔 *Nuevo comprobante de pago*\n\nCliente: +${customer.phone_number}\n\nPedido:\n${summary}\n\nResponde *confirmar* o *rechazar*`
+      `🔔 *NUEVO COMPROBANTE RECIBIDO*\n\n` +
+      `👤 Cliente: +${customer.phone_number}\n` +
+      `📍 Dirección: ${stateData.address || 'No especificada'}\n` +
+      `🛍️ Pedido:\n${summary}\n` +
+      `💰 Total a verificar: $${(stateData.total || 0).toLocaleString('es-CO')}\n\n` +
+      `Responde *confirmar* o *rechazar*`
     )
 
     await sendMessage(customer.phone_number,
-      pickRandom([
-        '✅ Recibí tu comprobante, estoy verificando el pago. Dame un momento... ⏳',
-        '📨 Comprobante recibido, verificando con el equipo. Un momento... ⏳'
-      ])
+      '✅ ¡Recibido! Estamos verificando tu pago. En un momento te confirmamos... ⏳'
     )
     return
   }
 
   await sendMessage(customer.phone_number,
-    'Para confirmar tu pedido necesito el comprobante de pago 📲 Envíalo como imagen.'
+    `Aún espero el comprobante por *$${(customer.state_data?.total || 0).toLocaleString('es-CO')}*. 📲\n\nRecuerda enviarlo como *imagen* (captura de pantalla).`
   )
 }
-
 async function handleValidandoPago(customer, business, userMessage, sendMessage) {
   // Esta función la llama el webhook cuando detecta que el mensaje viene del dueño
   const normalized = userMessage.toLowerCase().trim()
