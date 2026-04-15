@@ -326,34 +326,32 @@ async function handleValidandoPago(customer, business, userMessage, sendMessage)
   }
 }
 
-async function handlePedidoConfirmado(customer, business, userMessage, sendMessage) {
-  await updateCustomerState(customer.id, 'EN_PREPARACION')
-  await sendMessage(customer.phone_number,
-    '👨‍🍳 Tu pedido está en preparación. Te avisamos cuando salga a domicilio.'
-  )
-}
-
 async function handleEnPreparacion(customer, business, userMessage, sendMessage) {
-  await updateCustomerState(customer.id, 'EN_CAMINO')
-  await sendMessage(customer.phone_number,
-    '🛵 ¡Tu pedido ya salió! El domiciliario está en camino.'
-  )
+  // El cliente escribió mientras cocinan. 
+  // NO usamos updateCustomerState. Solo respondemos con IA.
+  const reply = await generateFreeResponse(business.ai_context, userMessage);
+  await sendMessage(customer.phone_number, reply);
 }
 
 async function handleEnCamino(customer, business, userMessage, sendMessage) {
-  await updateCustomerState(customer.id, 'ENTREGADO')
-  await sendMessage(customer.phone_number,
-    pickRandom([
-      '✅ ¡Pedido entregado! Gracias por tu compra. ¡Vuelve pronto! 😄',
-      '✅ ¡Listo! Esperamos que lo disfrutes. ¡Hasta la próxima! 🙌'
-    ])
-  )
-  // Resetear para próximo pedido
-  setTimeout(async () => {
-    await updateCustomerState(customer.id, 'NUEVO', {})
-  }, 5000)
+  // El cliente escribió mientras el repartidor va hacia allá.
+  // NO usamos updateCustomerState. Solo respondemos con IA.
+  const reply = await generateFreeResponse(business.ai_context, userMessage);
+  await sendMessage(customer.phone_number, reply);
 }
 
+async function handleEntregado(customer, business, userMessage, sendMessage) {
+  // Ya se entregó, pero si el cliente dice "gracias" o "estaba rico", 
+  // respondemos amablemente sin mandarle el menú todavía.
+  const intent = await classifyIntent('ENTREGADO', userMessage);
+  
+  if (intent === 'HACER_PEDIDO') {
+      await handleNuevo(customer, business, sendMessage);
+  } else {
+      const reply = await generateFreeResponse(business.ai_context, userMessage);
+      await sendMessage(customer.phone_number, reply);
+  }
+}
 // ─── ESTADOS GLOBALES ─────────────────────────────────────────────────────────
 
 async function handleAtencionInteligente(customer, business, userMessage, sendMessage) {
