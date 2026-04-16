@@ -297,18 +297,25 @@ async function handleEsperandoPago(customer, business, userMessage, hasMedia, se
   )
 }
 async function handleValidandoPago(customer, business, userMessage, sendMessage) {
-  // Esta función la llama el webhook cuando detecta que el mensaje viene del dueño
   const normalized = userMessage.toLowerCase().trim()
-
   const stateData = customer.state_data || {}
 
   if (normalized.includes('confirmar')) {
-    await supabase
+    const { error: orderError } = await supabase
       .from('orders')
       .update({ state: 'CONFIRMADO' })
       .eq('id', stateData.order_id)
 
-    await updateCustomerState(customer.id, 'EN_PREPARACION')
+    console.log('🔍 Error update order a CONFIRMADO:', orderError)
+    console.log('🔍 order_id usado:', stateData.order_id)
+
+    const { error: customerError } = await supabase
+      .from('customers')
+      .update({ state: 'EN_PREPARACION', last_activity: new Date().toISOString() })
+      .eq('id', customer.id)
+
+    console.log('🔍 Error update customer a EN_PREPARACION:', customerError)
+    console.log('🔍 customer.id usado:', customer.id)
 
     await sendMessage(customer.phone_number,
       pickRandom([
@@ -332,7 +339,6 @@ async function handleValidandoPago(customer, business, userMessage, sendMessage)
     )
   }
 }
-
 async function handleEnPreparacion(customer, business, userMessage, sendMessage) {
   // El cliente escribió mientras cocinan. 
   // NO usamos updateCustomerState. Solo respondemos con IA.
