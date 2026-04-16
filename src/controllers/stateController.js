@@ -296,21 +296,41 @@ async function handleEsperandoPago(customer, business, userMessage, hasMedia, se
     `Aún espero el comprobante por *$${(customer.state_data?.total || 0).toLocaleString('es-CO')}*. 📲\n\nRecuerda enviarlo como *imagen* (captura de pantalla).`
   )
 }
-async function handleValidandoPago(customer, business, userMessage, sendMessage) {
-  // Esta función la llama el webhook cuando detecta que el mensaje viene del dueño
+async function handleValidandoPago(customer, business, userMessage, sendMessage, fromPhone) {
   const normalized = userMessage.toLowerCase().trim()
-
   const stateData = customer.state_data || {}
+  
+  // Si el mensaje NO viene del dueño, ignorar (es el cliente preguntando)
+  if (fromPhone !== business.owner_phone) {
+    const reply = await generateFreeResponse(business.ai_context, userMessage, 'VALIDANDO_PAGO', stateData)
+    await sendMessage(customer.phone_number, reply)
+    return
+  }
+
+  // Mensaje viene del dueño: buscar el cliente real asociado al order
+  const { data: order } = await supabase
+    .from('orders')
+    .select('customer_id')
+    .eq('id', stateData.order_id)
+    .single()
+
+  if (!order) return
 
   if (normalized.includes('confirmar')) {
+    await supabase.from('orders').update({ state: 'CONFIRMADO' }).eq('id', stateData.order_id)
+    
+    // Actualizar el estado del CLIENTE, no del dueño
     await supabase
-      .from('orders')
-      .update({ state: 'CONFIRMADO' })
-      .eq('id', stateData.order_id)
+      .from('customers')
+      .update({ 
+        state: 'EN_PREPARACION',
+        previous_state: 'VALIDANDO_PAGO',
+        last_activity: new Date().toISOString()
+      })
+      .eq('id', order.customer_id)
 
-    await updateCustomerState(customer.id, 'PEDIDO_CONFIRMADO')
-
-    await sendMessage(customer.phone_number,
+    // Notificar al cliente
+    await sendMessage(customer.phone_number, // <- aquí customer.phone_number es el del cliente final
       pickRandom([
         '✅ ¡Pago confirmado! Tu pedido está en preparación 🍔 Tiempo estimado: 25-35 min.',
         '✅ ¡Listo! Pago recibido, ya estamos preparando tu pedido 🔥 En 25-35 min está contigo.'
@@ -320,12 +340,15 @@ async function handleValidandoPago(customer, business, userMessage, sendMessage)
   }
 
   if (normalized.includes('rechazar')) {
+    await supabase.from('orders').update({ state: 'PAGO_RECHAZADO' }).eq('id', stateData.order_id)
+    
     await supabase
-      .from('orders')
-      .update({ state: 'PAGO_RECHAZADO' })
-      .eq('id', stateData.order_id)
-
-    await updateCustomerState(customer.id, 'ESPERANDO_PAGO')
+      .from('customers')
+      .update({ 
+        state: 'ESPERANDO_PAGO',
+        last_activity: new Date().toISOString()
+      })
+      .eq('id', order.customer_id)
 
     await sendMessage(customer.phone_number,
       'Hubo un problema con tu comprobante de pago 😕 ¿Puedes enviarlo de nuevo?'
