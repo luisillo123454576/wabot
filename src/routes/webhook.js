@@ -71,18 +71,34 @@ router.post('/', async (req, res) => {
 
     const from = message.from
     const phoneNumberId = change.metadata.phone_number_id
+    
+    // LOG para depuración
+    console.log('📞 phoneNumberId recibido:', phoneNumberId)
+    console.log('📞 from:', from)
 
-    // ── Buscar negocio por phoneNumberId ──────────────────────────────────────
-    const { data: business } = await supabase
+    // ── Buscar negocio por phone_number o whatsapp_phone_number_id ──────────────
+    let { data: business } = await supabase
       .from('businesses')
       .select('*')
       .eq('phone_number', phoneNumberId)
       .single()
 
     if (!business) {
-      console.log('Negocio no encontrado para phoneNumberId:', phoneNumberId)
+      // Intentar buscar por whatsapp_phone_number_id
+      const { data: businessById } = await supabase
+        .from('businesses')
+        .select('*')
+        .eq('whatsapp_phone_number_id', phoneNumberId)
+        .single()
+      business = businessById
+    }
+
+    if (!business) {
+      console.log('❌ Negocio no encontrado para phoneNumberId:', phoneNumberId)
       return
     }
+
+    console.log('✅ Negocio encontrado:', business.name)
 
     // ── Detectar si el mensaje viene del dueño ────────────────────────────────
     const isOwner = business.owner_phone === from
