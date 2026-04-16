@@ -156,37 +156,50 @@ router.post('/', async (req, res) => {
 
       // EN CAMINO
       if (text === 'en camino') {
-        const { data: prepCustomer } = await supabase
-          .from('customers')
-          .select('*')
-          .eq('business_id', business.id)
-          .eq('state', 'EN_PREPARACION')
-          .order('last_activity', { ascending: true })
-          .limit(1)
-          .single()
+  // DEBUG TEMPORAL
+  const { data: allCustomers } = await supabase
+    .from('customers')
+    .select('phone_number, state')
+    .eq('business_id', business.id)
+  console.log('🔍 Estados actuales de customers:', JSON.stringify(allCustomers))
 
-        if (!prepCustomer) {
-          await sendMessage(from, 'No hay pedidos en preparación.')
-          return
-        }
+  const { data: prepCustomer } = await supabase
+    .from('customers')
+    .select('*')
+    .eq('business_id', business.id)
+    .eq('state', 'EN_PREPARACION')
+    .order('last_activity', { ascending: true })
+    .limit(1)
+    .single()
 
-        await supabase
-          .from('customers')
-          .update({ state: 'EN_CAMINO', last_activity: new Date().toISOString() })
-          .eq('id', prepCustomer.id)
+  console.log('🔍 prepCustomer encontrado:', JSON.stringify(prepCustomer))
 
-        await supabase
-          .from('orders')
-          .update({ state: 'EN_CAMINO' })
-          .eq('customer_id', prepCustomer.id)
-          .eq('state', 'CONFIRMADO')
+  if (!prepCustomer) {
+    await sendMessage(from, 'No hay pedidos en preparación.')
+    return
+  }
 
-        await sendMessage(prepCustomer.phone_number,
-          '🛵 ¡Tu pedido ya salió! El domiciliario va en camino. En unos minutos está contigo.'
-        )
-        await sendMessage(from, `✅ Cliente +${prepCustomer.phone_number} notificado — pedido en camino.`)
-        return
-      }
+  const { error: customerUpdateError } = await supabase
+    .from('customers')
+    .update({ state: 'EN_CAMINO', last_activity: new Date().toISOString() })
+    .eq('id', prepCustomer.id)
+
+  console.log('🔍 Error actualizando customer:', customerUpdateError)
+
+  const { error: orderUpdateError } = await supabase
+    .from('orders')
+    .update({ state: 'EN_CAMINO' })
+    .eq('customer_id', prepCustomer.id)
+    .eq('state', 'CONFIRMADO')
+
+  console.log('🔍 Error actualizando order:', orderUpdateError)
+
+  await sendMessage(prepCustomer.phone_number,
+    '🛵 ¡Tu pedido ya salió! El domiciliario va en camino. En unos minutos está contigo.'
+  )
+  await sendMessage(from, `✅ Cliente +${prepCustomer.phone_number} notificado — pedido en camino.`)
+  return
+}
 
       // ENTREGADO
       if (text === 'entregado') {
