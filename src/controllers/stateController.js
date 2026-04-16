@@ -410,7 +410,9 @@ async function handleErrorFlujo(customer, business, sendMessage) {
 
 async function handleState(customer, business, userMessage, hasMedia, sendMessage) {
   const state = customer.state || 'NUEVO'
-  
+  if (state === 'ESPERANDO_DIRECCION') {
+    return await handleEsperandoDireccion(customer, business, userMessage, sendMessage)
+  }
   // --- 1. FILTRO DE SEGURIDAD: CLASIFICAR ANTES DE ACTUAR ---
   const intent = await classifyIntent(state, userMessage);
 
