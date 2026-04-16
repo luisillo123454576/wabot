@@ -1,504 +1,135 @@
-const supabase = require('../services/supabase')
-const { classifyIntent, generateFreeResponse } = require('../services/ai')
-const { detectOrderItems } = require('../services/messageDetector')
-
-// ─── UTILIDADES ───────────────────────────────────────────────────────────────
-
-async function updateCustomerState(customerId, newState, stateData = null, savePrevious = false) {
-  const updates = {
-    state: newState,
-    last_activity: new Date().toISOString()
-  }
-
-  if (stateData !== null) updates.state_data = stateData
-  if (savePrevious) {
-    const { data: current } = await supabase
-      .from('customers')
-      .select('state')
-      .eq('id', customerId)
-      .single()
-    if (current) updates.previous_state = current.state
-  }
-
-  await supabase
-    .from('customers')
-    .update(updates)
-    .eq('id', customerId)
-}
-
-function formatMenu(products) {
-  if (!products || products.length === 0) return 'No hay productos disponibles.'
-  return products.map(p => `• ${p.name} — $${Number(p.price).toLocaleString('es-CO')}`).join('\n')
-}
-
-function formatCart(items) {
-  if (!items || items.length === 0) return 'Tu carrito está vacío.'
-  
-  // Solo devuelve las líneas de los productos
-  const lines = items.map(i => `• ${i.quantity}x ${i.name} — $${Number(i.subtotal).toLocaleString('es-CO')}`)
-  
-  return lines.join('\n') // Ya no agregamos la línea del "Total" aquí
-}
-
-// Variación de respuestas para sonar natural
-function pickRandom(options) {
-  return options[Math.floor(Math.random() * options.length)]
-}
-
-// ─── ESTADOS PRINCIPALES ──────────────────────────────────────────────────────
-
-async function handleNuevo(customer, business, sendMessage) {
-  const { data: products } = await supabase
-    .from('products')
-    .select('*')
-    .eq('business_id', business.id)
-    .eq('is_available', true)
-
-  const menu = formatMenu(products)
-
-  const greeting = pickRandom([
-    `¡Hola! Bienvenido a *${business.name}* 👋\n\nAquí te dejamos nuestro menú:\n\n${menu}\n\n¿Qué te provoca pedir hoy?`,
-    `¡Buenas! Gracias por escribirnos a *${business.name}* 😄\n\nEsto es lo que tenemos:\n\n${menu}\n\n¿Qué vas a querer?`,
-    `¡Hola! En *${business.name}* estamos para servirte 🙌\n\nNuestro menú:\n\n${menu}\n\n¿Qué se te antoja?`
-  ])
-
-  await sendMessage(customer.phone_number, greeting)
-  await updateCustomerState(customer.id, 'MENU_ENVIADO')
-}
-
-async function handleMenuEnviado(customer, business, userMessage, sendMessage) {
-  const intent = await classifyIntent('MENU_ENVIADO', userMessage)
-
-  if (intent === 'VER_MENU') {
-    const { data: products } = await supabase
-      .from('products')
-      .select('*')
-      .eq('business_id', business.id)
-      .eq('is_available', true)
-
-    const menu = formatMenu(products)
-    await sendMessage(customer.phone_number, `Claro, aquí está nuestro menú:\n\n${menu}\n\n¿Qué vas a querer?`)
-    return
-  }
-
-  if (intent === 'HACER_PEDIDO' || intent === 'REPETIR_PEDIDO') {
-    await updateCustomerState(customer.id, 'ARMANDO_PEDIDO', { items: [] })
-    await handleArmandoPedido(customer, business, userMessage, sendMessage)
-    return
-  }
-
-  if (intent === 'PREGUNTA_LIBRE') {
-    const reply = await generateFreeResponse(business.ai_context, userMessage, customer.state, customer.state_data)
-    await sendMessage(customer.phone_number, reply)
-    return
-  }
-
-  await sendMessage(customer.phone_number,
-    pickRandom([
-      '¿Qué deseas pedir? 😊',
-      '¿Qué te provoca hoy?',
-      'Dime qué vas a querer y te ayudo 🙌'
-    ])
-  )
-}
-
-async function handleArmandoPedido(customer, business, userMessage, sendMessage) {
-  const stateData = customer.state_data || { items: [] }
-  const currentItems = stateData.items || []
-
-  const intent = await classifyIntent('ARMANDO_PEDIDO', userMessage)
-
-  if (intent === 'CANCELAR') {
-    await updateCustomerState(customer.id, 'CANCELADO', { reason: 'cliente canceló', cancelled_by: 'cliente' })
-    await sendMessage(customer.phone_number,
-      pickRandom([
-        'Listo, cancelé tu pedido. Cuando quieras volver a pedir aquí estamos 😊',
-        'Pedido cancelado. ¡Vuelve cuando quieras! 👋'
-      ])
-    )
-    await updateCustomerState(customer.id, 'NUEVO', {})
-    return
-  }
-
-  if (intent === 'CONFIRMAR') {
-    if (currentItems.length === 0) {
-      await sendMessage(customer.phone_number, 'Aún no has agregado nada al pedido. ¿Qué deseas pedir?')
-      return
-    }
-    await updateCustomerState(customer.id, 'ESPERANDO_DIRECCION')
-    const summary = formatCart(currentItems)
-    await sendMessage(customer.phone_number,
-      `Perfecto, tu pedido es:\n\n${summary}\n\n¿A qué dirección te lo enviamos?`
-    )
-    return
-  }
-
-  if (intent === 'REPETIR_PEDIDO') {
-    const result = await detectOrderItems(userMessage, business.id, customer.id)
-    if (result.type === 'REPEAT') {
-      await updateCustomerState(customer.id, 'ARMANDO_PEDIDO', { items: result.items })
-      const summary = formatCart(result.items)
-      await sendMessage(customer.phone_number,
-        `Cargué tu pedido anterior:\n\n${summary}\n\n¿Lo confirmamos o quieres cambiar algo?`
-      )
-      return
-    }
-    if (result.type === 'NO_PREVIOUS_ORDER') {
-      await sendMessage(customer.phone_number, 'No encontré pedidos anteriores. ¿Qué deseas pedir hoy?')
-      return
-    }
-  }
-
-  // Detectar ítem del pedido
-  const result = await detectOrderItems(userMessage, business.id, customer.id)
-
-  if (result.type === 'FOUND') {
-    const { product, quantity } = result
-    const subtotal = product.price * quantity
-
-    // Verificar si el producto ya está en el carrito
-    const existingIndex = currentItems.findIndex(i => i.product_id === product.id)
-
-    if (existingIndex >= 0) {
-      currentItems[existingIndex].quantity += quantity
-      currentItems[existingIndex].subtotal += subtotal
-    } else {
-      currentItems.push({
-        product_id: product.id,
-        name: product.name,
-        quantity,
-        price: product.price,
-        subtotal
-      })
-    }
-
-    await updateCustomerState(customer.id, 'ARMANDO_PEDIDO', { items: currentItems })
-
-    const summary = formatCart(currentItems)
-    await sendMessage(customer.phone_number,
-      pickRandom([
-        `✅ Listo, agregué ${quantity}x ${product.name}.\n\n${summary}\n\n¿Algo más o confirmamos?`,
-        `✅ Perfecto, ${quantity}x ${product.name} al pedido.\n\n${summary}\n\n¿Agregamos algo más?`,
-        `✅ Ya tengo ${quantity}x ${product.name}.\n\n${summary}\n\n¿Seguimos o lo confirmamos?`
-      ])
-    )
-    return
-  }
-
-  if (result.type === 'NOT_FOUND') {
-    const { data: products } = await supabase
-      .from('products')
-      .select('*')
-      .eq('business_id', business.id)
-      .eq('is_available', true)
-
-    const menu = formatMenu(products)
-    await sendMessage(customer.phone_number,
-      `No entendí bien qué querías pedir. Aquí está el menú:\n\n${menu}\n\n¿Qué te llevo?`
-    )
-  }
-}
-async function handleEsperandoDireccion(customer, business, userMessage, sendMessage) {
-  const text = userMessage.trim();
-
-  // SCORE HEURÍSTICO (sin IA)
-  const addressRegex = /(calle|cll|cl|carrera|cra|cr|diagonal|dg|transversal|tv|avenida|av|barrio|br|mz|manzana|casa|lote|sector|apto|piso|este|oeste|norte|sur)\s?\d+|[#\-\d]{3,}/i;
-
-  let score = 0;
-  if (addressRegex.test(text)) score += 60;
-  if (text.length > 12) score += 20;
-  if (/\d+/.test(text)) score += 20;
-
-  // IA solo si hay duda (score medio)
-  let esDireccionReal = false;
-  if (score >= 80) {
-    esDireccionReal = true;
-  } else if (score >= 20) {
-    esDireccionReal = await isValidAddress(text);
-  }
-
-  if (esDireccionReal) {
-    const stateData = customer.state_data || { items: [] };
-    const items = stateData.items || [];
-    const subtotal = items.reduce((acc, i) => acc + i.subtotal, 0);
-    const totalFinal = subtotal + 3000;
-
-    const { data: order } = await supabase
-      .from('orders')
-      .insert({
-        business_id: business.id,
-        customer_id: customer.id,
-        items,
-        total: totalFinal,
-        delivery_address: text,
-        state: 'PENDIENTE'
-      })
-      .select().single();
-
-    await updateCustomerState(customer.id, 'ESPERANDO_PAGO', {
-      order_id: order.id,
-      items,
-      total: totalFinal,
-      address: text
-    });
-
-    await sendMessage(customer.phone_number,
-      `Direccion guardada: ${text}\n\n` +
-      `Resumen:\n${formatCart(items)}\n` +
-      `Domicilio: $3.000\n` +
-      `TOTAL: $${totalFinal.toLocaleString('es-CO')}\n\n` +
-      `Paga por Nequi: ${business.payment_info || '3235949088'}\n` +
-      `Envia el comprobante para confirmar.`
-    );
-  } else {
-    const reply = await generateFreeResponse(business.ai_context, text, customer.state, customer.state_data);
-    await sendMessage(customer.phone_number, reply);
-  }
-}
-async function handleEsperandoPago(customer, business, userMessage, hasMedia, sendMessage) {
-  const intent = await classifyIntent('ESPERANDO_PAGO', userMessage)
-
-  if (intent === 'CANCELAR') {
-    await updateCustomerState(customer.id, 'NUEVO', {})
-    await sendMessage(customer.phone_number, 'Pedido cancelado. ¡Cuando quieras volvemos! 👋')
-    return
-  }
-
-  // Detectar el comprobante (imagen)
-  if (hasMedia || intent === 'ENVIO_COMPROBANTE') {
-    const stateData = customer.state_data || {}
-
-    await supabase
-      .from('orders')
-      .update({ state: 'VALIDANDO_PAGO', payment_proof: 'recibido' })
-      .eq('id', stateData.order_id)
-
-    await updateCustomerState(customer.id, 'VALIDANDO_PAGO')
-
-    // Notificar al dueño con lujo de detalles
-    const summary = formatCart(stateData.items || [])
-    await sendMessage(business.owner_phone,
-      `🔔 *NUEVO COMPROBANTE RECIBIDO*\n\n` +
-      `👤 Cliente: +${customer.phone_number}\n` +
-      `📍 Dirección: ${stateData.address || 'No especificada'}\n` +
-      `🛍️ Pedido:\n${summary}\n` +
-      `💰 Total a verificar: $${(stateData.total || 0).toLocaleString('es-CO')}\n\n` +
-      `Responde *confirmar* o *rechazar*`
-    )
-
-    await sendMessage(customer.phone_number,
-      '✅ ¡Recibido! Estamos verificando tu pago. En un momento te confirmamos... ⏳'
-    )
-    return
-  }
-
-  await sendMessage(customer.phone_number,
-    `Aún espero el comprobante por *$${(customer.state_data?.total || 0).toLocaleString('es-CO')}*. 📲\n\nRecuerda enviarlo como *imagen* (captura de pantalla).`
-  )
-}
-async function handleValidandoPago(customer, business, userMessage, sendMessage) {
-  // Esta función la llama el webhook cuando detecta que el mensaje viene del dueño
-  const normalized = userMessage.toLowerCase().trim()
-
-  const stateData = customer.state_data || {}
-
-  if (normalized.includes('confirmar')) {
-    await supabase
-      .from('orders')
-      .update({ state: 'CONFIRMADO' })
-      .eq('id', stateData.order_id)
-
-    await updateCustomerState(customer.id, 'PEDIDO_CONFIRMADO')
-
-    await sendMessage(customer.phone_number,
-      pickRandom([
-        '✅ ¡Pago confirmado! Tu pedido está en preparación 🍔 Tiempo estimado: 25-35 min.',
-        '✅ ¡Listo! Pago recibido, ya estamos preparando tu pedido 🔥 En 25-35 min está contigo.'
-      ])
-    )
-    return
-  }
-
-  if (normalized.includes('rechazar')) {
-    await supabase
-      .from('orders')
-      .update({ state: 'PAGO_RECHAZADO' })
-      .eq('id', stateData.order_id)
-
-    await updateCustomerState(customer.id, 'ESPERANDO_PAGO')
-
-    await sendMessage(customer.phone_number,
-      'Hubo un problema con tu comprobante de pago 😕 ¿Puedes enviarlo de nuevo?'
-    )
-  }
-}
-
-async function handleEnPreparacion(customer, business, userMessage, sendMessage) {
-  // El cliente escribió mientras cocinan. 
-  // NO usamos updateCustomerState. Solo respondemos con IA.
-  const reply = await generateFreeResponse(business.ai_context, userMessage, customer.state, customer.state_data)
-  await sendMessage(customer.phone_number, reply);
-}
-
-async function handleEnCamino(customer, business, userMessage, sendMessage) {
-  // El cliente escribió mientras el repartidor va hacia allá.
-  // NO usamos updateCustomerState. Solo respondemos con IA.
-  const reply = await generateFreeResponse(business.ai_context, userMessage, customer.state, customer.state_data)
-  await sendMessage(customer.phone_number, reply);
-}
-
-async function handleEntregado(customer, business, userMessage, sendMessage) {
-  // Ya se entregó, pero si el cliente dice "gracias" o "estaba rico", 
-  // respondemos amablemente sin mandarle el menú todavía.
-  const intent = await classifyIntent('ENTREGADO', userMessage);
-  
-  if (intent === 'HACER_PEDIDO') {
-      await handleNuevo(customer, business, sendMessage);
-  } else {
-      const reply = await generateFreeResponse(business.ai_context, userMessage, customer.state, customer.state_data)
-      await sendMessage(customer.phone_number, reply);
-  }
-}
-// ─── ESTADOS GLOBALES ─────────────────────────────────────────────────────────
-
-async function handleAtencionInteligente(customer, business, userMessage, sendMessage) {
-  const reply = await generateFreeResponse(business.ai_context, userMessage, customer.state, customer.state_data)
-  await sendMessage(customer.phone_number, reply)
-  // Regresar al estado anterior
-  if (customer.previous_state) {
-    await updateCustomerState(customer.id, customer.previous_state)
-  }
-}
-
-async function handleInactivoTimeout(customer, business, sendMessage, level) {
-  if (level === '5min') {
-    await sendMessage(customer.phone_number,
-      pickRandom([
-        '¿Sigues ahí? 😊 ¿Te ayudo con algo?',
-        '¡Hola! ¿Continuamos con tu pedido? 🙌'
-      ])
-    )
-    return
-  }
-
-  if (level === '30min') {
-    await sendMessage(customer.phone_number,
-      '¿Todavía quieres hacer tu pedido? Si necesitas ayuda aquí estamos 😊'
-    )
-    return
-  }
-
-  if (level === '2h') {
-    await updateCustomerState(customer.id, 'NUEVO', {})
-    await sendMessage(customer.phone_number,
-      'Tu sesión expiró por inactividad. Cuando quieras volver a pedir escríbenos 👋'
-    )
-  }
-}
-
-async function handleErrorFlujo(customer, business, sendMessage) {
-  await sendMessage(customer.phone_number,
-    pickRandom([
-      'No entendí bien, ¿me repites? 😊',
-      '¿Puedes escribirlo de otra forma? No te entendí bien.',
-      'Disculpa, no capté eso. ¿Me lo repites?'
-    ])
-  )
-}
-
-// ─── ROUTER PRINCIPAL ─────────────────────────────────────────────────────────
-
-async function handleState(customer, business, userMessage, hasMedia, sendMessage) {
-  const state = customer.state || 'NUEVO'
-  if (state === 'ESPERANDO_DIRECCION') {
-    return await handleEsperandoDireccion(customer, business, userMessage, sendMessage)
-  }
-  // --- 1. FILTRO DE SEGURIDAD: CLASIFICAR ANTES DE ACTUAR ---
-  const intent = await classifyIntent(state, userMessage);
-
-  // Si el cliente quiere CANCELAR o ver el MENU, no importa en qué estado esté,
-  // le hacemos caso al comando, no a la IA.
-  if (intent === 'CANCELAR') {
-      await updateCustomerState(customer.id, 'NUEVO', {});
-      return await sendMessage(customer.phone_number, "Pedido cancelado. ¿En qué puedo ayudarte ahora?");
-  }
-  
-  if (intent === 'VER_MENU' && state !== 'NUEVO') {
-      return await handleNuevo(customer, business, sendMessage);
-  }
-
-  // --- 2. EL SWITCH DE ESTADOS ---
-  switch (state) {
-    case 'NUEVO':
-      await handleNuevo(customer, business, sendMessage)
-      break
-
-    case 'MENU_ENVIADO':
-    case 'ARMANDO_PEDIDO':
-      // Si la intención es PREGUNTA_LIBRE, usamos IA. 
-      // Si es HACER_PEDIDO, usamos la lógica de productos.
-      if (intent === 'PREGUNTA_LIBRE') {
-          const reply = await generateFreeResponse(business.ai_context, userMessage, state, customer.state_data);
-          await sendMessage(customer.phone_number, reply);
-      } else {
-          await handleArmandoPedido(customer, business, userMessage, sendMessage);
+const Groq = require('groq-sdk')
+
+const groq = new Groq({ apiKey: process.env.GROQ_API_KEY })
+
+// Función 1: clasificar intención del mensaje
+async function classifyIntent(currentState, userMessage) {
+  const response = await groq.chat.completions.create({
+    model: 'llama-3.1-8b-instant',
+    max_tokens: 10,
+    messages: [
+      {
+        role: 'user',
+        content: `Estado actual del usuario: ${currentState}
+Mensaje recibido: "${userMessage}"
+
+Clasifica en UNA de estas opciones:
+HACER_PEDIDO
+VER_MENU
+CONFIRMAR   (ejemplos: "listo", "eso es todo", "no mas", "ya esta", "confirmo")
+CANCELAR    (ejemplos: "cancela", "no quiero nada", "dejalo", "olvida")
+ENVIO_COMPROBANTE
+REPETIR_PEDIDO
+PREGUNTA_LIBRE
+
+Responde solo la palabra exacta. Sin explicacion.`
       }
-      break
+    ]
+  })
 
-    case 'ESPERANDO_PAGO':
-      // Solo si manda foto o dice que ya pagó
-      if (hasMedia || intent === 'ENVIO_COMPROBANTE') {
-          await handleEsperandoPago(customer, business, userMessage, hasMedia, sendMessage);
-      } else {
-          // Si solo está preguntando "¿dónde pago?", responde la IA cortico
-          const reply = await generateFreeResponse(business.ai_context, userMessage, state, customer.state_data);
-          await sendMessage(customer.phone_number, reply);
+  return response.choices[0].message.content.trim()
+}
+
+// Función 2: extraer ítems del pedido cuando alias no detectó nada
+async function extractOrderItems(userMessage, menuItems) {
+  const menuList = menuItems.map(p => `- ${p.name}`).join('\n')
+
+  const response = await groq.chat.completions.create({
+    model: 'llama-3.1-8b-instant',
+    max_tokens: 100,
+    messages: [
+      {
+        role: 'user',
+        content: `Menú disponible:
+${menuList}
+
+Mensaje del cliente: "${userMessage}"
+
+Extrae el pedido. Responde SOLO en JSON con este formato exacto:
+{"producto":"nombre exacto del producto","cantidad":1}
+
+Si no puedes identificar el producto responde:
+{"producto":null,"cantidad":0}`
       }
-      break
+    ]
+  })
 
-    case 'VALIDANDO_PAGO':
-      // El nombre de la variable aquí debe ser igual al de abajo
-      const reply = await generateFreeResponse(business.ai_context, userMessage, customer.state, customer.state_data);
-      await sendMessage(customer.phone_number, reply); // <--- Aquí quítale el "Validando"
-      break
-
-    case 'PEDIDO_CONFIRMADO':
-    case 'EN_PREPARACION':
-      // Ambos estados ahora usan la función que creamos para cuando están cocinando
-      await handleEnPreparacion(customer, business, userMessage, sendMessage)
-      break
-
-    case 'EN_CAMINO':
-      await handleEnCamino(customer, business, userMessage, sendMessage)
-      break
-
-    case 'ENTREGADO':
-      // Usamos la función inteligente que evita el menú automático
-      await handleEntregado(customer, business, userMessage, sendMessage)
-      break
-
-    case 'CANCELADO':
-      await updateCustomerState(customer.id, 'NUEVO', {})
-      await handleNuevo(customer, business, sendMessage)
-      break
-
-    case 'ATENCION_INTELIGENTE':
-      await handleAtencionInteligente(customer, business, userMessage, sendMessage)
-      break
-
-    case 'HUMANO_INTERVIENE':
-      await sendMessage(customer.phone_number,
-        'Un momento, te estoy conectando con nuestro equipo 🙏'
-      )
-      break
-
-    default:
-      await handleErrorFlujo(customer, business, sendMessage)
+  const raw = response.choices[0].message.content.trim()
+  try {
+    const clean = raw.replace(/```json|```/g, '').trim()
+    return JSON.parse(clean)
+  } catch {
+    return { producto: null, cantidad: 0 }
   }
 }
-
-module.exports = {
-  handleState,
-  handleInactivoTimeout,
-  handleErrorFlujo
+// NUEVA Función: Validar si el texto es una dirección (IA como Fallback)
+async function isValidAddress(userMessage) {
+  const response = await groq.chat.completions.create({
+    model: 'llama-3.1-8b-instant',
+    max_tokens: 10,
+    messages: [
+      {
+        role: 'system',
+        content: 'Eres un validador de direcciones. Responde "SI" si el texto parece una dirección de entrega. Responde "NO" si es un comentario, duda o saludo.'
+      },
+      {
+        role: 'user',
+        content: `¿Es esto una dirección?: "${userMessage}"`
+      }
+    ]
+  });
+  const result = response.choices[0].message.content.trim().toUpperCase();
+  return result.includes('SI');
 }
+
+// Función 3: respuesta libre para preguntas fuera del flujo
+async function generateFreeResponse(businessContext, userMessage, currentState = null, stateData = null) {
+  
+  // Contexto del estado actual para que la IA sepa dónde está parada
+  let stateContext = ''
+  
+  if (currentState) {
+    const stateDescriptions = {
+      'MENU_ENVIADO': 'El cliente acaba de recibir el menú y está decidiendo qué pedir.',
+      'ARMANDO_PEDIDO': `El cliente está armando su pedido. Carrito actual: ${stateData?.items?.length > 0 ? stateData.items.map(i => `${i.quantity}x ${i.name}`).join(', ') : 'vacío'}.`,
+      'ESPERANDO_DIRECCION': 'El cliente ya confirmó su pedido y está a punto de dar su dirección de entrega.',
+      'ESPERANDO_PAGO': `El cliente debe enviar el comprobante de pago. Total a cobrar: $${(stateData?.total || 0).toLocaleString('es-CO')}.`,
+      'VALIDANDO_PAGO': 'El cliente ya envió el comprobante y está esperando confirmación del negocio.',
+      'EN_PREPARACION': 'El pedido del cliente ya fue confirmado y está siendo preparado en cocina.',
+      'EN_CAMINO': 'El pedido ya salió a domicilio y está en camino al cliente.',
+      'ENTREGADO': 'El pedido fue entregado. El cliente puede querer hacer un nuevo pedido o dar feedback.'
+    }
+    
+    stateContext = stateDescriptions[currentState] 
+      ? `\nCONTEXTO ACTUAL: ${stateDescriptions[currentState]}` 
+      : ''
+  }
+
+  const response = await groq.chat.completions.create({
+    model: 'llama-3.1-8b-instant',
+    max_tokens: 150,
+    messages: [
+      {
+        role: 'system',
+        content: `Eres un asistente de INFORMACIÓN para Burger Factory. 
+        REGLAS CRÍTICAS:
+        1. NO intentes tomar pedidos. Si el cliente quiere algo, dile que solo lo escriba y el sistema lo anotará.
+        2. NO hables de pagos, comprobantes ni envíos a menos que el cliente pregunte explícitamente "¿Cómo pago?" o "¿Dónde están?".
+        3. Si el cliente está pidiendo comida, NO INTERVENGAS con sugerencias, deja que el sistema lo procese.
+        4. Sé extremadamente breve (máximo 1 línea y media). Tono costeño.
+        ${stateContext}
+
+        Información del negocio:
+        ${businessContext}`
+      },
+      {
+        role: 'user',
+        content: userMessage
+      }
+    ]
+  })
+
+  return response.choices[0].message.content.trim()
+}
+
+module.exports = { classifyIntent, extractOrderItems, generateFreeResponse, isValidAddress }
