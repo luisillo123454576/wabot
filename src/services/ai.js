@@ -70,16 +70,16 @@ async function isValidAddress(userMessage) {
     messages: [
       {
         role: 'system',
-        content: 'Eres un validador de direcciones. Responde "SI" si el texto parece una dirección de entrega, punto de referencia o lugar. Responde "NO" si es un comentario, duda o saludo.'
+        content: 'Eres un validador de direcciones. Responde "SI" si el texto parece una dirección de entrega. Responde "NO" si es un comentario, duda o saludo.'
       },
       {
         role: 'user',
         content: `¿Es esto una dirección?: "${userMessage}"`
       }
     ]
-  })
-  const result = response.choices[0].message.content.trim().toUpperCase()
-  return result.includes('SI')
+  });
+  const result = response.choices[0].message.content.trim().toUpperCase();
+  return result.includes('SI');
 }
 
 // Función 3: respuesta libre para preguntas fuera del flujo

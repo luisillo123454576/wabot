@@ -202,40 +202,39 @@ async function handleArmandoPedido(customer, business, userMessage, sendMessage)
 async function handleEsperandoDireccion(customer, business, userMessage, sendMessage) {
   const text = userMessage.trim();
   
-  // 1. FILTRO DE INTENCIÓN (Para no procesar una cancelación como dirección)
+  // 1. FILTRO DE INTENCIÓN (Cancelar primero)
   const intent = await classifyIntent('ESPERANDO_DIRECCION', text);
   if (intent === 'CANCELAR') {
     await updateCustomerState(customer.id, 'NUEVO', {});
     return await sendMessage(customer.phone_number, 'Pedido cancelado. ¡Cuando quieras volvemos! 👋');
   }
-
-  // 2. SCORE HEURÍSTICO (Heurística rápida sin IA)
-  const addressRegex = /(calle|cll|cl|carrera|cra|cr|diagonal|dg|transversal|tv|avenida|av|barrio|br|mz|manzana|casa|lote|sector|apto|piso|esquina|entre)\s?\d+|[#\-\d]{3,}/i;
+  
+  // 2. SCORE HEURÍSTICO (Regex + palabras clave)
+  const addressRegex = /(calle|cll|cl|carrera|cra|cr|diagonal|dg|transversal|tv|avenida|av|barrio|br|mz|manzana|casa|lote|sector|apto|piso|este|oeste|norte|sur)\s?\d+|[#\-\d]{3,}/i;
+  
   let score = 0;
-  if (addressRegex.test(text)) score += 60; 
-  if (text.length > 12) score += 20;         
+  if (addressRegex.test(text)) score += 60;
+  if (text.length > 12) score += 20;
   if (/\d+/.test(text)) score += 20;
-
+  
   // 3. TOMA DE DECISIÓN
   let esDireccionReal = false;
-
+  
   if (score >= 80) {
-    esDireccionReal = true; // Certeza por Heurística
+    esDireccionReal = true; // Certeza por heurística
   } else if (score >= 20) {
-    // Si hay duda (ej: "Frente al parque Coquivacoa"), usamos la IA como Fallback
+    // Duda: usamos IA como fallback
     esDireccionReal = await isValidAddress(text);
   }
-
-  // --- EJECUCIÓN ---
-
+  
+  // 4. EJECUCIÓN
   if (esDireccionReal) {
-    // SI ES DIRECCIÓN -> Procedemos a crear la orden (tu lógica original)
     const stateData = customer.state_data || { items: [] };
     const items = stateData.items || [];
     const subtotal = items.reduce((acc, i) => acc + i.subtotal, 0);
     const costoDomicilio = 3000;
     const totalFinal = subtotal + costoDomicilio;
-
+    
     const { data: order } = await supabase
       .from('orders')
       .insert({
@@ -247,29 +246,95 @@ async function handleEsperandoDireccion(customer, business, userMessage, sendMes
         state: 'PENDIENTE'
       })
       .select().single();
-
-    await updateCustomerState(customer.id, 'ESPERANDO_PAGO', { 
-      order_id: order.id, 
-      items, 
+    
+    await updateCustomerState(customer.id, 'ESPERANDO_PAGO', {
+      order_id: order.id,
+      items,
       total: totalFinal,
-      address: text 
+      address: text
     });
-
-    const mensajePago = `📍 *Dirección guardada:* ${text}\n\n` +
-      `🛒 *Resumen:*\n${formatCart(items)}\n` +
-      `🚚 *Domicilio:* $3.000\n` +
-      `💰 *TOTAL A PAGAR:* $${totalFinal.toLocaleString('es-CO')}\n\n` +
-      `💳 *Paga por Nequi:* ${business.payment_info || '3235949088'}\n\n` +
-      `Por favor, envía la *imagen del comprobante* para confirmar tu pedido. 📲`;
-
-    await sendMessage(customer.phone_number, mensajePago);
-
+    
+    await sendMessage(customer.phone_number,
+      `📍 Dirección guardada: ${text}\n\n` +
+      `Resumen:\n${formatCart(items)}\n` +
+      `🚚 Domicilio: $3.000\n` +
+      `💰 TOTAL: $${totalFinal.toLocaleString('es-CO')}\n\n` +
+      `Paga por Nequi: ${business.payment_info || '3235949088'}\n` +
+      `Envía el comprobante para confirmar.`
+    );
   } else {
-    // NO ES DIRECCIÓN -> Dejamos que la IA responda la duda o comentario
-    // SIN crear orden y SIN cambiar de estado
-    const reply = await generateFreeResponse(business.ai_context, text, 'ESPERANDO_DIRECCION', customer.state_data);
+    // No es dirección: IA responde la pregunta sin cambiar estado
+    const reply = await generateFreeResponse(business.ai_context, text, customer.state, customer.state_data);
+    await sendMessage(customer.phone_number, reply);
+  }async function handleEsperandoDireccion(customer, business, userMessage, sendMessage) {
+  const text = userMessage.trim();
+  
+  // 1. FILTRO DE INTENCIÓN (Cancelar primero)
+  const intent = await classifyIntent('ESPERANDO_DIRECCION', text);
+  if (intent === 'CANCELAR') {
+    await updateCustomerState(customer.id, 'NUEVO', {});
+    return await sendMessage(customer.phone_number, 'Pedido cancelado. ¡Cuando quieras volvemos! 👋');
+  }
+  
+  // 2. SCORE HEURÍSTICO (Regex + palabras clave)
+  const addressRegex = /(calle|cll|cl|carrera|cra|cr|diagonal|dg|transversal|tv|avenida|av|barrio|br|mz|manzana|casa|lote|sector|apto|piso|este|oeste|norte|sur)\s?\d+|[#\-\d]{3,}/i;
+  
+  let score = 0;
+  if (addressRegex.test(text)) score += 60;
+  if (text.length > 12) score += 20;
+  if (/\d+/.test(text)) score += 20;
+  
+  // 3. TOMA DE DECISIÓN
+  let esDireccionReal = false;
+  
+  if (score >= 80) {
+    esDireccionReal = true; // Certeza por heurística
+  } else if (score >= 20) {
+    // Duda: usamos IA como fallback
+    esDireccionReal = await isValidAddress(text);
+  }
+  
+  // 4. EJECUCIÓN
+  if (esDireccionReal) {
+    const stateData = customer.state_data || { items: [] };
+    const items = stateData.items || [];
+    const subtotal = items.reduce((acc, i) => acc + i.subtotal, 0);
+    const costoDomicilio = 3000;
+    const totalFinal = subtotal + costoDomicilio;
+    
+    const { data: order } = await supabase
+      .from('orders')
+      .insert({
+        business_id: business.id,
+        customer_id: customer.id,
+        items,
+        total: totalFinal,
+        delivery_address: text,
+        state: 'PENDIENTE'
+      })
+      .select().single();
+    
+    await updateCustomerState(customer.id, 'ESPERANDO_PAGO', {
+      order_id: order.id,
+      items,
+      total: totalFinal,
+      address: text
+    });
+    
+    await sendMessage(customer.phone_number,
+      `📍 Dirección guardada: ${text}\n\n` +
+      `Resumen:\n${formatCart(items)}\n` +
+      `🚚 Domicilio: $3.000\n` +
+      `💰 TOTAL: $${totalFinal.toLocaleString('es-CO')}\n\n` +
+      `Paga por Nequi: ${business.payment_info || '3235949088'}\n` +
+      `Envía el comprobante para confirmar.`
+    );
+  } else {
+    // No es dirección: IA responde la pregunta sin cambiar estado
+    const reply = await generateFreeResponse(business.ai_context, text, customer.state, customer.state_data);
     await sendMessage(customer.phone_number, reply);
   }
+}
 }
 async function handleEsperandoPago(customer, business, userMessage, hasMedia, sendMessage) {
   const intent = await classifyIntent('ESPERANDO_PAGO', userMessage)
