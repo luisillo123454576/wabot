@@ -16,13 +16,13 @@ Mensaje recibido: "${userMessage}"
 Clasifica en UNA de estas opciones:
 HACER_PEDIDO
 VER_MENU
-CONFIRMAR
-CANCELAR
+CONFIRMAR   (ejemplos: "listo", "eso es todo", "no mas", "ya esta", "confirmo")
+CANCELAR    (ejemplos: "cancela", "no quiero nada", "dejalo", "olvida")
 ENVIO_COMPROBANTE
 REPETIR_PEDIDO
 PREGUNTA_LIBRE
 
-Responde solo la palabra exacta. Sin explicación.`
+Responde solo la palabra exacta. Sin explicacion.`
       }
     ]
   })
