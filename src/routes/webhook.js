@@ -71,12 +71,10 @@ router.post('/', async (req, res) => {
 
     const from = message.from
     const phoneNumberId = change.metadata.phone_number_id
-    
-    // LOG para depuración
+
     console.log('📞 phoneNumberId recibido:', phoneNumberId)
     console.log('📞 from:', from)
 
-    // ── Buscar negocio por phone_number o whatsapp_phone_number_id ──────────────
     let { data: business } = await supabase
       .from('businesses')
       .select('*')
@@ -84,7 +82,6 @@ router.post('/', async (req, res) => {
       .single()
 
     if (!business) {
-      // Intentar buscar por whatsapp_phone_number_id
       const { data: businessById } = await supabase
         .from('businesses')
         .select('*')
@@ -100,15 +97,11 @@ router.post('/', async (req, res) => {
 
     console.log('✅ Negocio encontrado:', business.name)
 
-    // ── Detectar si el mensaje viene del dueño ────────────────────────────────
     const isOwner = business.owner_phone === from
 
-    // ── Buscar o crear cliente ────────────────────────────────────────────────
     let customer = null
 
-    if (isOwner) {
-      // El dueño no es un cliente, se maneja aparte
-    } else {
+    if (!isOwner) {
       const { data: existingCustomer } = await supabase
         .from('customers')
         .select('*')
@@ -138,8 +131,8 @@ router.post('/', async (req, res) => {
     if (isOwner && message.type === 'text') {
       const text = message.text.body.trim().toLowerCase()
 
+      // CONFIRMAR / RECHAZAR
       if (text === 'confirmar' || text === 'rechazar') {
-        // Buscar el cliente que está en VALIDANDO_PAGO
         const { data: pendingCustomer } = await supabase
           .from('customers')
           .select('*')
@@ -154,19 +147,83 @@ router.post('/', async (req, res) => {
           return
         }
 
-        await handleState(
-          pendingCustomer,
-          business,
-          text,
-          false,
-          sendMessage
-        )
+        await handleState(pendingCustomer, business, text, false, sendMessage)
 
         const action = text === 'confirmar' ? '✅ confirmado' : '❌ rechazado'
         await sendMessage(from, `Pago ${action}. Cliente +${pendingCustomer.phone_number} fue notificado.`)
-      } else {
-        await sendMessage(from, 'Comandos disponibles: *confirmar* o *rechazar*')
+        return
       }
+
+      // EN CAMINO
+      if (text === 'en camino') {
+        const { data: prepCustomer } = await supabase
+          .from('customers')
+          .select('*')
+          .eq('business_id', business.id)
+          .eq('state', 'EN_PREPARACION')
+          .order('last_activity', { ascending: true })
+          .limit(1)
+          .single()
+
+        if (!prepCustomer) {
+          await sendMessage(from, 'No hay pedidos en preparación.')
+          return
+        }
+
+        await supabase
+          .from('customers')
+          .update({ state: 'EN_CAMINO', last_activity: new Date().toISOString() })
+          .eq('id', prepCustomer.id)
+
+        await supabase
+          .from('orders')
+          .update({ state: 'EN_CAMINO' })
+          .eq('customer_id', prepCustomer.id)
+          .eq('state', 'CONFIRMADO')
+
+        await sendMessage(prepCustomer.phone_number,
+          '🛵 ¡Tu pedido ya salió! El domiciliario va en camino. En unos minutos está contigo.'
+        )
+        await sendMessage(from, `✅ Cliente +${prepCustomer.phone_number} notificado — pedido en camino.`)
+        return
+      }
+
+      // ENTREGADO
+      if (text === 'entregado') {
+        const { data: caminoCustomer } = await supabase
+          .from('customers')
+          .select('*')
+          .eq('business_id', business.id)
+          .eq('state', 'EN_CAMINO')
+          .order('last_activity', { ascending: true })
+          .limit(1)
+          .single()
+
+        if (!caminoCustomer) {
+          await sendMessage(from, 'No hay pedidos en camino.')
+          return
+        }
+
+        await supabase
+          .from('customers')
+          .update({ state: 'ENTREGADO', last_activity: new Date().toISOString() })
+          .eq('id', caminoCustomer.id)
+
+        await supabase
+          .from('orders')
+          .update({ state: 'ENTREGADO' })
+          .eq('customer_id', caminoCustomer.id)
+          .eq('state', 'EN_CAMINO')
+
+        await sendMessage(caminoCustomer.phone_number,
+          '✅ ¡Pedido entregado! Espero que lo disfrutes 😊 Si quieres pedir de nuevo, solo escríbenos.'
+        )
+        await sendMessage(from, `✅ Cliente +${caminoCustomer.phone_number} — pedido marcado como entregado.`)
+        return
+      }
+
+      // Comando no reconocido
+      await sendMessage(from, 'Comandos disponibles: *confirmar*, *rechazar*, *en camino*, *entregado*')
       return
     }
 
@@ -188,32 +245,27 @@ router.post('/', async (req, res) => {
       hasMedia = true
       userText = 'comprobante_enviado'
 
-      // Si el cliente está en VALIDANDO_PAGO ya, no reenviar
       if (customer.state === 'VALIDANDO_PAGO') {
         await sendMessage(from, '⏳ Ya tenemos tu comprobante en revisión. Espera la confirmación.')
         return
       }
 
-      // Solo reenviar imagen al dueño si está ESPERANDO_PAGO
       if (customer.state === 'ESPERANDO_PAGO' && business.owner_phone) {
         await sendImage(business.owner_phone, message.image.id)
       }
     }
 
-    // ── Actualizar last_activity ───────────────────────────────────────────────
     await supabase
       .from('customers')
       .update({ last_activity: new Date().toISOString() })
       .eq('id', customer.id)
 
-    // Refrescar customer con state_data actualizado
     const { data: freshCustomer } = await supabase
       .from('customers')
       .select('*')
       .eq('id', customer.id)
       .single()
 
-    // ── Enrutar al controlador de estados ────────────────────────────────────
     await handleState(freshCustomer, business, userText, hasMedia, sendMessage)
 
   } catch (err) {
