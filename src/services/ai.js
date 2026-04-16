@@ -16,10 +16,11 @@ Mensaje recibido: "${userMessage}"
 Clasifica en UNA de estas opciones:
 HACER_PEDIDO
 VER_MENU
-CONFIRMAR   (ejemplos: "listo", "eso es todo", "no mas", "ya esta", "confirmo")
-CANCELAR    (ejemplos: "cancela", "no quiero nada", "dejalo", "olvida")
+CONFIRMAR       (ejemplos: "listo", "eso es todo", "no mas", "ya esta", "confirmo")
+CANCELAR        (ejemplos: "cancela", "no quiero nada", "dejalo", "olvida")
 ENVIO_COMPROBANTE
 REPETIR_PEDIDO
+PAGO_EFECTIVO   (ejemplos: "pago en efectivo", "pago al llegar", "pago contra entrega", "en efectivo", "cash", "cuando llegue pago")
 PREGUNTA_LIBRE
 
 Responde solo la palabra exacta. Sin explicacion.`
@@ -36,7 +37,7 @@ async function extractOrderItems(userMessage, menuItems) {
 
   const response = await groq.chat.completions.create({
     model: 'llama-3.1-8b-instant',
-    max_tokens: 100,
+    max_tokens: 300,
     messages: [
       {
         role: 'user',
@@ -45,11 +46,12 @@ ${menuList}
 
 Mensaje del cliente: "${userMessage}"
 
-Extrae el pedido. Responde SOLO en JSON con este formato exacto:
-{"producto":"nombre exacto del producto","cantidad":1}
+Extrae TODOS los productos mencionados. Responde SOLO en JSON con este formato exacto:
+{"items":[{"producto":"nombre exacto del producto","cantidad":1}]}
 
-Si no puedes identificar el producto responde:
-{"producto":null,"cantidad":0}`
+Si el cliente menciona varios productos, inclúyelos todos en el array.
+Si no puedes identificar ningún producto responde:
+{"items":[]}`
       }
     ]
   })
@@ -59,7 +61,7 @@ Si no puedes identificar el producto responde:
     const clean = raw.replace(/```json|```/g, '').trim()
     return JSON.parse(clean)
   } catch {
-    return { producto: null, cantidad: 0 }
+    return { items: [] }
   }
 }
 // NUEVA Función: Validar si el texto es una dirección (IA como Fallback)

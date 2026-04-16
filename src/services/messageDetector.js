@@ -71,6 +71,8 @@ async function detectByAlias(userMessage, businessId) {
 
 // Filtro 2: extraer con IA cuando alias no encuentra nada
 async function detectByAI(userMessage, businessId) {
+  const { extractOrderItems } = require('./ai')
+
   const { data: products } = await supabase
     .from('products')
     .select('*')
@@ -81,19 +83,22 @@ async function detectByAI(userMessage, businessId) {
 
   const extracted = await extractOrderItems(userMessage, products)
 
-  if (!extracted.producto) return null
+  if (!extracted.items || extracted.items.length === 0) return null
 
-  // Validar que el producto extraído existe en el menú real
-  const match = products.find(p =>
-    normalizeText(p.name) === normalizeText(extracted.producto)
-  )
+  const results = []
+  for (const item of extracted.items) {
+    if (!item.producto) continue
+    const match = products.find(p =>
+      normalizeText(p.name) === normalizeText(item.producto)
+    )
+    if (match) {
+      results.push({ product: match, quantity: item.cantidad || 1 })
+    }
+  }
 
-  if (!match) return null
-
-  return { product: match, quantity: extracted.cantidad || 1 }
+  return results.length > 0 ? results : null
 }
 
-// Función principal: ejecuta los 3 filtros en secuencia
 async function detectOrderItems(userMessage, businessId, customerId) {
   const normalized = normalizeText(userMessage)
 
@@ -111,27 +116,24 @@ async function detectOrderItems(userMessage, businessId, customerId) {
     }
   }
 
-  // Filtro 1: detección por alias
+  // Filtro 1: detección por alias (sigue retornando un solo producto)
   const byAlias = await detectByAlias(userMessage, businessId)
   if (byAlias) {
     return {
       type: 'FOUND',
-      product: byAlias.product,
-      quantity: byAlias.quantity
+      products: [{ product: byAlias.product, quantity: byAlias.quantity }]
     }
   }
 
-  // Filtro 2: extracción por IA
+  // Filtro 2: extracción por IA (ahora retorna array)
   const byAI = await detectByAI(userMessage, businessId)
   if (byAI) {
     return {
       type: 'FOUND',
-      product: byAI.product,
-      quantity: byAI.quantity
+      products: byAI
     }
   }
 
-  // No se encontró nada
   return { type: 'NOT_FOUND' }
 }
 

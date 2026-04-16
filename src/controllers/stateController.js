@@ -153,10 +153,8 @@ async function handleArmandoPedido(customer, business, userMessage, sendMessage)
   const result = await detectOrderItems(userMessage, business.id, customer.id)
 
   if (result.type === 'FOUND') {
-    const { product, quantity } = result
+  for (const { product, quantity } of result.products) {
     const subtotal = product.price * quantity
-
-    // Verificar si el producto ya está en el carrito
     const existingIndex = currentItems.findIndex(i => i.product_id === product.id)
 
     if (existingIndex >= 0) {
@@ -171,19 +169,20 @@ async function handleArmandoPedido(customer, business, userMessage, sendMessage)
         subtotal
       })
     }
-
-    await updateCustomerState(customer.id, 'ARMANDO_PEDIDO', { items: currentItems })
-
-    const summary = formatCart(currentItems)
-    await sendMessage(customer.phone_number,
-      pickRandom([
-        `✅ Listo, agregué ${quantity}x ${product.name}.\n\n${summary}\n\n¿Algo más o confirmamos?`,
-        `✅ Perfecto, ${quantity}x ${product.name} al pedido.\n\n${summary}\n\n¿Agregamos algo más?`,
-        `✅ Ya tengo ${quantity}x ${product.name}.\n\n${summary}\n\n¿Seguimos o lo confirmamos?`
-      ])
-    )
-    return
   }
+
+  await updateCustomerState(customer.id, 'ARMANDO_PEDIDO', { items: currentItems })
+
+  const summary = formatCart(currentItems)
+  await sendMessage(customer.phone_number,
+    pickRandom([
+      `✅ Listo, agregué los productos.\n\n${summary}\n\n¿Algo más o confirmamos?`,
+      `✅ Perfecto, ya tengo todo anotado.\n\n${summary}\n\n¿Agregamos algo más?`,
+      `✅ Anotado.\n\n${summary}\n\n¿Seguimos o lo confirmamos?`
+    ])
+  )
+  return
+}
 
   if (result.type === 'NOT_FOUND') {
     const { data: products } = await supabase
@@ -306,16 +305,13 @@ async function handleValidandoPago(customer, business, userMessage, sendMessage)
       .update({ state: 'CONFIRMADO' })
       .eq('id', stateData.order_id)
 
-    console.log('🔍 Error update order a CONFIRMADO:', orderError)
-    console.log('🔍 order_id usado:', stateData.order_id)
-
+    
     const { error: customerError } = await supabase
       .from('customers')
       .update({ state: 'EN_PREPARACION', last_activity: new Date().toISOString() })
       .eq('id', customer.id)
 
-    console.log('🔍 Error update customer a EN_PREPARACION:', customerError)
-    console.log('🔍 customer.id usado:', customer.id)
+    
 
     await sendMessage(customer.phone_number,
       pickRandom([
@@ -416,9 +412,16 @@ async function handleErrorFlujo(customer, business, sendMessage) {
 
 async function handleState(customer, business, userMessage, hasMedia, sendMessage) {
   const state = customer.state || 'NUEVO'
+  
+  // NUEVO y ESPERANDO_DIRECCION van directo, sin clasificar intención
+  if (state === 'NUEVO') {
+    return await handleNuevo(customer, business, sendMessage)
+  }
+  
   if (state === 'ESPERANDO_DIRECCION') {
     return await handleEsperandoDireccion(customer, business, userMessage, sendMessage)
   }
+
   // --- 1. FILTRO DE SEGURIDAD: CLASIFICAR ANTES DE ACTUAR ---
   const intent = await classifyIntent(state, userMessage);
 
@@ -452,6 +455,33 @@ async function handleState(customer, business, userMessage, hasMedia, sendMessag
       break
 
     case 'ESPERANDO_PAGO':
+      if (intent === 'PAGO_EFECTIVO') {
+  const stateData = customer.state_data || {}
+
+  // Crear la orden en Supabase
+  await supabase
+    .from('orders')
+    .update({ state: 'CONFIRMADO', payment_method: 'EFECTIVO' })
+    .eq('id', stateData.order_id)
+
+  await updateCustomerState(customer.id, 'EN_PREPARACION')
+
+  // Notificar al dueño
+  const summary = formatCart(stateData.items || [])
+  await sendMessage(business.owner_phone,
+    `🔔 *NUEVO PEDIDO — PAGO EN EFECTIVO*\n\n` +
+    `👤 Cliente: +${customer.phone_number}\n` +
+    `📍 Dirección: ${stateData.address || 'No especificada'}\n` +
+    `🛍️ Pedido:\n${summary}\n` +
+    `💰 Total a cobrar en puerta: $${(stateData.total || 0).toLocaleString('es-CO')}\n\n` +
+    `Responde *en camino* cuando salga el domiciliario.`
+  )
+
+  await sendMessage(customer.phone_number,
+    `✅ ¡Listo! Tu pedido está confirmado. Pagas $${(stateData.total || 0).toLocaleString('es-CO')} en efectivo cuando llegue el domiciliario 💵\n\nEstamos preparando tu pedido 🍔 Tiempo estimado: 25-35 min.`
+  )
+  return
+}
       // Solo si manda foto o dice que ya pagó
       if (hasMedia || intent === 'ENVIO_COMPROBANTE') {
           await handleEsperandoPago(customer, business, userMessage, hasMedia, sendMessage);
