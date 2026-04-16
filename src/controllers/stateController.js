@@ -308,7 +308,7 @@ async function handleValidandoPago(customer, business, userMessage, sendMessage)
       .update({ state: 'CONFIRMADO' })
       .eq('id', stateData.order_id)
 
-    await updateCustomerState(customer.id, 'PEDIDO_CONFIRMADO')
+    await updateCustomerState(customer.id, 'EN_PREPARACION')
 
     await sendMessage(customer.phone_number,
       pickRandom([
