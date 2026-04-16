@@ -3,7 +3,7 @@ const router = Router()
 const axios = require('axios')
 const supabase = require('../services/supabase')
 const { transcribeAudio } = require('../services/transcription')
-const { handleState, handleErrorFlujo } = require('../controllers/stateController')
+const { handleState, handleErrorFlujo, handleValidandoPago } = require('../controllers/stateController')
 
 // ─── VERIFICACIÓN META ────────────────────────────────────────────────────────
 
@@ -133,26 +133,27 @@ router.post('/', async (req, res) => {
 
       // CONFIRMAR / RECHAZAR
       if (text === 'confirmar' || text === 'rechazar') {
-        const { data: pendingCustomer } = await supabase
-          .from('customers')
-          .select('*')
-          .eq('business_id', business.id)
-          .eq('state', 'VALIDANDO_PAGO')
-          .order('last_activity', { ascending: true })
-          .limit(1)
-          .single()
+  const { data: pendingCustomer } = await supabase
+    .from('customers')
+    .select('*')
+    .eq('business_id', business.id)
+    .eq('state', 'VALIDANDO_PAGO')
+    .order('last_activity', { ascending: true })
+    .limit(1)
+    .single()
 
-        if (!pendingCustomer) {
-          await sendMessage(from, 'No hay pagos pendientes de verificación.')
-          return
-        }
+  if (!pendingCustomer) {
+    await sendMessage(from, 'No hay pagos pendientes de verificación.')
+    return
+  }
 
-        await handleState(pendingCustomer, business, text, false, sendMessage)
+  // Llamada directa — sin pasar por el switch ni la IA
+  await handleValidandoPago(pendingCustomer, business, text, sendMessage)
 
-        const action = text === 'confirmar' ? '✅ confirmado' : '❌ rechazado'
-        await sendMessage(from, `Pago ${action}. Cliente +${pendingCustomer.phone_number} fue notificado.`)
-        return
-      }
+  const action = text === 'confirmar' ? '✅ confirmado' : '❌ rechazado'
+  await sendMessage(from, `Pago ${action}. Cliente +${pendingCustomer.phone_number} fue notificado.`)
+  return
+}
 
       // EN CAMINO
       if (text === 'en camino') {

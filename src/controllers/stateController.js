@@ -506,5 +506,6 @@ async function handleState(customer, business, userMessage, hasMedia, sendMessag
 module.exports = {
   handleState,
   handleInactivoTimeout,
-  handleErrorFlujo
+  handleErrorFlujo,
+  handleValidandoPago
 }
