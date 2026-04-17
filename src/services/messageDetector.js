@@ -48,6 +48,8 @@ async function detectByAlias(userMessage, businessId) {
 
   if (!products || products.length === 0) return null
 
+  const found = []
+
   for (const product of products) {
     const aliases = product.aliases || []
     const allTerms = [
@@ -57,18 +59,20 @@ async function detectByAlias(userMessage, businessId) {
 
     for (const term of allTerms) {
       if (normalized.includes(term)) {
-        // Detectar cantidad en el mensaje
-        const quantityMatch = normalized.match(/(\d+)/)
+        // Detectar cantidad cerca del término encontrado
+        const termIndex = normalized.indexOf(term)
+        const surrounding = normalized.substring(Math.max(0, termIndex - 10), termIndex + term.length + 10)
+        const quantityMatch = surrounding.match(/(\d+)/)
         const quantity = quantityMatch ? parseInt(quantityMatch[1]) : 1
 
-        return { product, quantity }
+        found.push({ product, quantity })
+        break // evita duplicar el mismo producto por múltiples aliases
       }
     }
   }
 
-  return null
+  return found.length > 0 ? found : null
 }
-
 // Filtro 2: extraer con IA cuando alias no encuentra nada
 async function detectByAI(userMessage, businessId) {
   const { extractOrderItems } = require('./ai')
@@ -116,23 +120,23 @@ async function detectOrderItems(userMessage, businessId, customerId) {
     }
   }
 
-  // Filtro 1: detección por alias (sigue retornando un solo producto)
-  const byAlias = await detectByAlias(userMessage, businessId)
-  if (byAlias) {
-    return {
-      type: 'FOUND',
-      products: [{ product: byAlias.product, quantity: byAlias.quantity }]
-    }
+  // Filtro 1: detección por alias
+const byAlias = await detectByAlias(userMessage, businessId)
+if (byAlias) {
+  return {
+    type: 'FOUND',
+    products: byAlias
   }
+}
 
-  // Filtro 2: extracción por IA (ahora retorna array)
-  const byAI = await detectByAI(userMessage, businessId)
-  if (byAI) {
-    return {
-      type: 'FOUND',
-      products: byAI
-    }
+// Filtro 2: extracción por IA
+const byAI = await detectByAI(userMessage, businessId)
+if (byAI) {
+  return {
+    type: 'FOUND',
+    products: byAI
   }
+}
 
   return { type: 'NOT_FOUND' }
 }
