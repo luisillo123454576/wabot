@@ -33,12 +33,22 @@ Responde solo la palabra exacta. Sin explicacion.`
 
 // Función 2: extraer ítems del pedido cuando alias no detectó nada
 async function extractOrderItems(userMessage, menuItems) {
-  const menuList = menuItems.map(p => `- ${p.name}`).join('\n')
+  const menuList = menuItems.map(p => `- "${p.name}"`).join('\n')
 
   const response = await groq.chat.completions.create({
     model: 'llama-3.1-8b-instant',
     max_tokens: 300,
     messages: [
+      {
+        role: 'system',
+        content: `Eres un mapeador de pedidos. Tu único trabajo es relacionar lo que el cliente escribió con el nombre exacto del producto en el menú, aunque esté mal escrito o abreviado.
+REGLAS ABSOLUTAS:
+1. SOLO puedes usar nombres que existan exactamente en el menú proporcionado.
+2. Si el cliente escribió "amburguesa clasica" y en el menú existe "Hamburguesa Clásica", devuelves "Hamburguesa Clásica".
+3. NUNCA devuelvas un producto que no esté en el menú.
+4. Si no puedes mapear algo con certeza, ignóralo.
+5. Devuelve ÚNICAMENTE el JSON sin ningún texto adicional.`
+      },
       {
         role: 'user',
         content: `Menú disponible:
@@ -46,12 +56,11 @@ ${menuList}
 
 Mensaje del cliente: "${userMessage}"
 
-Extrae TODOS los productos mencionados. Responde SOLO en JSON con este formato exacto:
-{"items":[{"producto":"nombre exacto del producto","cantidad":1}]}
+Mapea cada producto mencionado al nombre exacto del menú.
+Responde ÚNICAMENTE con este JSON:
+{"items":[{"producto":"nombre exacto del menú","cantidad":1}]}
 
-Si el cliente menciona varios productos, inclúyelos todos en el array.
-Si no puedes identificar ningún producto responde:
-{"items":[]}`
+Si no encuentras ningún producto válido: {"items":[]}`
       }
     ]
   })
@@ -87,42 +96,34 @@ async function isValidAddress(userMessage) {
 // Función 3: respuesta libre para preguntas fuera del flujo
 async function generateFreeResponse(businessContext, userMessage, currentState = null, stateData = null) {
   
-  // Contexto del estado actual para que la IA sepa dónde está parada
-  let stateContext = ''
-  
-  if (currentState) {
-    const stateDescriptions = {
-      'MENU_ENVIADO': 'El cliente acaba de recibir el menú y está decidiendo qué pedir.',
-      'ARMANDO_PEDIDO': `El cliente está armando su pedido. Carrito actual: ${stateData?.items?.length > 0 ? stateData.items.map(i => `${i.quantity}x ${i.name}`).join(', ') : 'vacío'}.`,
-      'ESPERANDO_DIRECCION': 'El cliente ya confirmó su pedido y está a punto de dar su dirección de entrega.',
-      'ESPERANDO_PAGO': `El cliente debe enviar el comprobante de pago. Total a cobrar: $${(stateData?.total || 0).toLocaleString('es-CO')}.`,
-      'VALIDANDO_PAGO': 'El cliente ya envió el comprobante y está esperando confirmación del negocio.',
-      'EN_PREPARACION': 'El pedido del cliente ya fue confirmado y está siendo preparado en cocina.',
-      'EN_CAMINO': 'El pedido ya salió a domicilio y está en camino al cliente.',
-      'ENTREGADO': 'El pedido fue entregado. El cliente puede querer hacer un nuevo pedido o dar feedback.'
-    }
-    
-    stateContext = stateDescriptions[currentState] 
-      ? `\nCONTEXTO ACTUAL: ${stateDescriptions[currentState]}` 
-      : ''
+  const stateDescriptions = {
+    'MENU_ENVIADO': 'El cliente acaba de recibir el menú. SOLO responde si pregunta algo específico del menú como ingredientes o alergias. Si dice que quiere algo, responde: "¡Dime qué quieres y lo anoto! 😊"',
+    'ARMANDO_PEDIDO': `El cliente está armando su pedido. Carrito actual: ${stateData?.items?.length > 0 ? stateData.items.map(i => `${i.quantity}x ${i.name}`).join(', ') : 'vacío'}. SOLO confirma lo que hay en el carrito si pregunta. No sugieras productos.`,
+    'ESPERANDO_DIRECCION': 'El cliente debe dar su dirección. SOLO dile que escriba su dirección de entrega. Nada más.',
+    'ESPERANDO_PAGO': `El cliente debe enviar el comprobante. Total: $${(stateData?.total || 0).toLocaleString('es-CO')}. SOLO recuérdale que envíe la foto del comprobante.`,
+    'VALIDANDO_PAGO': 'El pago está en verificación. SOLO dile que espere la confirmación. Máximo 1 línea.',
+    'EN_PREPARACION': 'El pedido está en cocina. SOLO dile que está siendo preparado y el tiempo estimado es 25-35 min.',
+    'EN_CAMINO': 'El pedido va en camino. SOLO dile que el domiciliario ya va hacia allá.',
+    'ENTREGADO': 'El pedido fue entregado. Pregúntale si quiere hacer otro pedido.'
   }
+
+  const stateContext = stateDescriptions[currentState] || 'Responde brevemente y redirige al flujo de pedido.'
 
   const response = await groq.chat.completions.create({
     model: 'llama-3.1-8b-instant',
-    max_tokens: 150,
+    max_tokens: 60,
     messages: [
       {
         role: 'system',
-        content: `Eres un asistente de INFORMACIÓN para Burger Factory. 
-        REGLAS CRÍTICAS:
-        1. NO intentes tomar pedidos. Si el cliente quiere algo, dile que solo lo escriba y el sistema lo anotará.
-        2. NO hables de pagos, comprobantes ni envíos a menos que el cliente pregunte explícitamente "¿Cómo pago?" o "¿Dónde están?".
-        3. Si el cliente está pidiendo comida, NO INTERVENGAS con sugerencias, deja que el sistema lo procese.
-        4. Sé extremadamente breve (máximo 1 línea y media). Tono costeño.
-        ${stateContext}
+        content: `Eres el asistente de ${businessContext || 'este negocio'}.
+REGLAS ABSOLUTAS:
+1. NUNCA tomes pedidos ni anotes productos — eso lo hace el sistema automáticamente.
+2. NUNCA inventes estados, precios ni productos.
+3. NUNCA respondas más de 1 línea.
+4. Tu único trabajo es responder la pregunta puntual del cliente según su estado actual.
+5. Si el cliente quiere pedir algo, dile SOLAMENTE: "¡Dime qué quieres y lo anoto! 😊"
 
-        Información del negocio:
-        ${businessContext}`
+ESTADO ACTUAL DEL CLIENTE: ${stateContext}`
       },
       {
         role: 'user',
@@ -133,5 +134,4 @@ async function generateFreeResponse(businessContext, userMessage, currentState =
 
   return response.choices[0].message.content.trim()
 }
-
 module.exports = { classifyIntent, extractOrderItems, generateFreeResponse, isValidAddress }

@@ -438,21 +438,25 @@ async function handleState(customer, business, userMessage, hasMedia, sendMessag
 
   // --- 2. EL SWITCH DE ESTADOS ---
   switch (state) {
-    case 'NUEVO':
-      await handleNuevo(customer, business, sendMessage)
-      break
+  case 'NUEVO':
+    await handleNuevo(customer, business, sendMessage)
+    break
 
-    case 'MENU_ENVIADO':
-    case 'ARMANDO_PEDIDO':
-      // Si la intención es PREGUNTA_LIBRE, usamos IA. 
-      // Si es HACER_PEDIDO, usamos la lógica de productos.
-      if (intent === 'PREGUNTA_LIBRE') {
-          const reply = await generateFreeResponse(business.ai_context, userMessage, state, customer.state_data);
-          await sendMessage(customer.phone_number, reply);
-      } else {
-          await handleArmandoPedido(customer, business, userMessage, sendMessage);
-      }
-      break
+  case 'MENU_ENVIADO':
+    if (intent === 'PREGUNTA_LIBRE') {
+      const reply = await generateFreeResponse(business.ai_context, userMessage, state, customer.state_data)
+      await sendMessage(customer.phone_number, reply)
+    } else {
+      await handleMenuEnviado(customer, business, userMessage, sendMessage)
+    }
+    break
+
+  case 'ARMANDO_PEDIDO':
+    // Aquí la IA NO responde preguntas libres
+    // Todo mensaje se intenta interpretar como producto
+    // Si no reconoce nada, handleArmandoPedido muestra el menú y pregunta de nuevo
+    await handleArmandoPedido(customer, business, userMessage, sendMessage)
+    break
 
     case 'ESPERANDO_PAGO':
       if (intent === 'PAGO_EFECTIVO') {
