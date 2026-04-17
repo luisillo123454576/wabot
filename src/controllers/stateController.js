@@ -526,7 +526,7 @@ async function handleState(customer, business, userMessage, hasMedia, sendMessag
       await sendMessage(customer.phone_number,
         'Un momento, te estoy conectando con nuestro equipo 🙏'
       )
-      break
+     break
 
     default:
       await handleErrorFlujo(customer, business, sendMessage)
