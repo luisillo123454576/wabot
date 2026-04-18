@@ -10,6 +10,19 @@ function normalizeText(text) {
     .replace(/[^a-z0-9\s]/g, '')
     .trim()
 }
+function wordsToNumbers(text) {
+  const map = {
+    'un ': '1 ', 'una ': '1 ', 'uno ': '1 ',
+    'dos ': '2 ', 'tres ': '3 ', 'cuatro ': '4 ',
+    'cinco ': '5 ', 'seis ': '6 ', 'siete ': '7 ',
+    'ocho ': '8 ', 'nueve ': '9 ', 'diez ': '10 '
+  }
+  let result = text
+  for (const [word, num] of Object.entries(map)) {
+    result = result.replace(new RegExp(word, 'gi'), num)
+  }
+  return result
+}
 
 // Filtro 0: detectar "lo mismo de ayer"
 const REPEAT_TRIGGERS = [
@@ -39,6 +52,7 @@ async function detectRepeatOrder(customerId) {
 // Filtro 1: detectar por aliases sin IA
 async function detectByAlias(userMessage, businessId) {
   const normalized = normalizeText(userMessage)
+  const normalizedWithNums = wordsToNumbers(normalized) // ← agregar esta línea
 
   const { data: products } = await supabase
     .from('products')
@@ -58,15 +72,14 @@ async function detectByAlias(userMessage, businessId) {
     ]
 
     for (const term of allTerms) {
-      if (normalized.includes(term)) {
-        // Detectar cantidad cerca del término encontrado
-        const termIndex = normalized.indexOf(term)
-        const surrounding = normalized.substring(Math.max(0, termIndex - 10), termIndex + term.length + 10)
+      if (normalizedWithNums.includes(term)) {
+        const termIndex = normalizedWithNums.indexOf(term)
+        const surrounding = normalizedWithNums.substring(Math.max(0, termIndex - 10), termIndex + term.length + 10)
         const quantityMatch = surrounding.match(/(\d+)/)
         const quantity = quantityMatch ? parseInt(quantityMatch[1]) : 1
 
         found.push({ product, quantity })
-        break // evita duplicar el mismo producto por múltiples aliases
+        break
       }
     }
   }
@@ -76,6 +89,7 @@ async function detectByAlias(userMessage, businessId) {
 // Filtro 2: extraer con IA cuando alias no encuentra nada
 async function detectByAI(userMessage, businessId) {
   const { extractOrderItems } = require('./ai')
+  const messageWithNums = wordsToNumbers(normalizeText(userMessage))  // ← agregar
 
   const { data: products } = await supabase
     .from('products')
@@ -85,7 +99,7 @@ async function detectByAI(userMessage, businessId) {
 
   if (!products || products.length === 0) return null
 
-  const extracted = await extractOrderItems(userMessage, products)
+  const extracted = await extractOrderItems(messageWithNums, products) 
 
   if (!extracted.items || extracted.items.length === 0) return null
 
