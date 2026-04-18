@@ -256,6 +256,7 @@ async function handleEsperandoDireccion(customer, business, userMessage, sendMes
 }
 async function handleEsperandoPago(customer, business, userMessage, hasMedia, sendMessage) {
   const intent = await classifyIntent('ESPERANDO_PAGO', userMessage)
+  const msgLower = userMessage.toLowerCase()
 
   if (intent === 'CANCELAR') {
     await updateCustomerState(customer.id, 'NUEVO', {})
@@ -263,7 +264,7 @@ async function handleEsperandoPago(customer, business, userMessage, hasMedia, se
     return
   }
 
-  // Detectar el comprobante (imagen)
+  // Cliente manda comprobante (imagen)
   if (hasMedia || intent === 'ENVIO_COMPROBANTE') {
     const stateData = customer.state_data || {}
 
@@ -274,7 +275,6 @@ async function handleEsperandoPago(customer, business, userMessage, hasMedia, se
 
     await updateCustomerState(customer.id, 'VALIDANDO_PAGO')
 
-    // Notificar al dueño con lujo de detalles
     const summary = formatCart(stateData.items || [])
     await sendMessage(business.owner_phone,
       `🔔 *NUEVO COMPROBANTE RECIBIDO*\n\n` +
@@ -291,8 +291,55 @@ async function handleEsperandoPago(customer, business, userMessage, hasMedia, se
     return
   }
 
+  // Cliente quiere pagar en efectivo
+  if (intent === 'PAGO_EFECTIVO') {
+    const stateData = customer.state_data || {}
+
+    await supabase
+      .from('orders')
+      .update({ state: 'CONFIRMADO', payment_method: 'EFECTIVO' })
+      .eq('id', stateData.order_id)
+
+    await updateCustomerState(customer.id, 'EN_PREPARACION')
+
+    const summary = formatCart(stateData.items || [])
+    await sendMessage(business.owner_phone,
+      `🔔 *NUEVO PEDIDO — PAGO EN EFECTIVO*\n\n` +
+      `👤 Cliente: +${customer.phone_number}\n` +
+      `📍 Dirección: ${stateData.address || 'No especificada'}\n` +
+      `🛍️ Pedido:\n${summary}\n` +
+      `💰 Total a cobrar en puerta: $${(stateData.total || 0).toLocaleString('es-CO')}\n\n` +
+      `Responde *en camino* cuando salga el domiciliario.`
+    )
+
+    await sendMessage(customer.phone_number,
+      `✅ ¡Listo! Tu pedido está confirmado. Pagas $${(stateData.total || 0).toLocaleString('es-CO')} en efectivo cuando llegue el domiciliario 💵\n\nEstamos preparando tu pedido 🍔 Tiempo estimado: 25-35 min.`
+    )
+    return
+  }
+
+  // Cliente menciona Nequi pero no ha mandado comprobante aún
+  if (msgLower.includes('nequi') || msgLower.includes('transferencia') || msgLower.includes('voy a pagar') || msgLower.includes('voy a transferir')) {
+    await sendMessage(customer.phone_number,
+      `Perfecto 👍 Cuando hagas el pago al 💳 *${business.payment_info}* envíanos la captura de pantalla como comprobante 📲`
+    )
+    return
+  }
+
+  // Cliente pregunta por otros métodos de pago
+  if (msgLower.includes('bancolombia') || msgLower.includes('daviplata') || msgLower.includes('pse') || 
+      msgLower.includes('tarjeta') || msgLower.includes('credito') || msgLower.includes('debito') ||
+      msgLower.includes('otro') || msgLower.includes('metodo') || msgLower.includes('como pago') ||
+      msgLower.includes('formas de pago') || msgLower.includes('aceptan')) {
+    await sendMessage(customer.phone_number,
+      `Por el momento solo manejamos:\n\n💳 *${business.payment_info}* *Efectivo* — pagas cuando llega el domiciliario\n\n¿Con cuál te queda mejor?`
+    )
+    return
+  }
+
+  // Cualquier otra pregunta — IA con contexto estricto de pago
   await sendMessage(customer.phone_number,
-    `Aún espero el comprobante por *$${(customer.state_data?.total || 0).toLocaleString('es-CO')}*. 📲\n\nRecuerda enviarlo como *imagen* (captura de pantalla).`
+    `Recuerda que puedes pagar por:\n\n💳 *${business.payment_info}* (envía el comprobante como imagen)\n💵 *Efectivo* — pagas cuando llega el domiciliario\n\n¿Cuál prefieres?`
   )
 }
 async function handleValidandoPago(customer, business, userMessage, sendMessage) {
@@ -413,7 +460,6 @@ async function handleErrorFlujo(customer, business, sendMessage) {
 async function handleState(customer, business, userMessage, hasMedia, sendMessage) {
   const state = customer.state || 'NUEVO'
   
-  // NUEVO y ESPERANDO_DIRECCION van directo, sin clasificar intención
   if (state === 'NUEVO') {
     return await handleNuevo(customer, business, sendMessage)
   }
@@ -422,18 +468,15 @@ async function handleState(customer, business, userMessage, hasMedia, sendMessag
     return await handleEsperandoDireccion(customer, business, userMessage, sendMessage)
   }
 
-  // --- 1. FILTRO DE SEGURIDAD: CLASIFICAR ANTES DE ACTUAR ---
-  const intent = await classifyIntent(state, userMessage);
+  const intent = await classifyIntent(state, userMessage)
 
-  // Si el cliente quiere CANCELAR o ver el MENU, no importa en qué estado esté,
-  // le hacemos caso al comando, no a la IA.
-  if (intent === 'CANCELAR') {
-      await updateCustomerState(customer.id, 'NUEVO', {});
-      return await sendMessage(customer.phone_number, "Pedido cancelado. ¿En qué puedo ayudarte ahora?");
+  if (intent === 'CANCELAR' && state !== 'ENTREGADO') {
+    await updateCustomerState(customer.id, 'NUEVO', {})
+    return await sendMessage(customer.phone_number, "Pedido cancelado. ¿En qué puedo ayudarte ahora?")
   }
   
-  if (intent === 'VER_MENU' && state !== 'NUEVO') {
-      return await handleNuevo(customer, business, sendMessage);
+  if (intent === 'VER_MENU' && state !== 'NUEVO' && state !== 'ENTREGADO') {
+    return await handleNuevo(customer, business, sendMessage)
   }
 
   // --- 2. EL SWITCH DE ESTADOS ---
