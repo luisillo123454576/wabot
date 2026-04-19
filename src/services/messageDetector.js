@@ -52,38 +52,35 @@ async function detectRepeatOrder(customerId) {
 // Filtro 1: detectar por aliases sin IA
 async function detectByAlias(userMessage, businessId) {
   const normalized = normalizeText(userMessage)
-  const normalizedWithNums = wordsToNumbers(normalized) // ← agregar esta línea
+  const normalizedWithNums = wordsToNumbers(normalized + ' ')
 
   const { data: products } = await supabase
-    .from('products')
-    .select('*')
-    .eq('business_id', businessId)
-    .eq('is_available', true)
+    .from('products').select('*')
+    .eq('business_id', businessId).eq('is_available', true)
 
   if (!products || products.length === 0) return null
 
   const found = []
-
   for (const product of products) {
     const aliases = product.aliases || []
-    const allTerms = [
-      normalizeText(product.name),
-      ...aliases.map(a => normalizeText(a))
-    ]
+    const allTerms = [normalizeText(product.name), ...aliases.map(a => normalizeText(a))]
 
     for (const term of allTerms) {
-      if (normalizedWithNums.includes(term)) {
-        const termIndex = normalizedWithNums.indexOf(term)
-        const surrounding = normalizedWithNums.substring(Math.max(0, termIndex - 10), termIndex + term.length + 10)
-        const quantityMatch = surrounding.match(/(\d+)/)
-        const quantity = quantityMatch ? parseInt(quantityMatch[1]) : 1
+      const idx = normalizedWithNums.indexOf(term)
+      if (idx === -1) continue
 
-        found.push({ product, quantity })
-        break
-      }
+      // Buscar cantidad ANTES y DESPUÉS del término (rango más amplio)
+      const before = normalizedWithNums.substring(Math.max(0, idx - 15), idx)
+      const after = normalizedWithNums.substring(idx + term.length, idx + term.length + 10)
+      const surrounding = before + after
+
+      const quantityMatch = surrounding.match(/(\d+)/)
+      const quantity = quantityMatch ? parseInt(quantityMatch[1]) : 1
+
+      found.push({ product, quantity })
+      break
     }
   }
-
   return found.length > 0 ? found : null
 }
 // Filtro 2: extraer con IA cuando alias no encuentra nada

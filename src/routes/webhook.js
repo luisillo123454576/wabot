@@ -68,6 +68,8 @@ router.post('/', async (req, res) => {
     const message = change?.messages?.[0]
 
     if (!message || !['text', 'audio', 'image'].includes(message.type)) return
+    // Ignorar ediciones de mensajes
+    if (message?.context?.edited || message?.edited) return
 
     const from = message.from
     const phoneNumberId = change.metadata.phone_number_id
