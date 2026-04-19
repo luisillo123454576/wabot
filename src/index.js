@@ -1,7 +1,8 @@
+import cors from 'cors'
 const express = require('express')
 const dotenv = require('dotenv')
-
-dotenv.config()
+const panelRouter = require('./routes/panel')
+app.use('/api/panel', panelRouter)
 
 const supabase = require('./services/supabase')
 
