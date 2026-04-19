@@ -4,7 +4,7 @@ const axios = require('axios')
 const supabase = require('../services/supabase')
 const { transcribeAudio } = require('../services/transcription')
 const { handleState, handleErrorFlujo, handleValidandoPago } = require('../controllers/stateController')
-
+const { isBusinessOpen } = require('../utils/time')
 // ─── VERIFICACIÓN META ────────────────────────────────────────────────────────
 
 router.get('/', (req, res) => {
@@ -242,6 +242,14 @@ router.post('/', async (req, res) => {
     }
 
     if (!customer) return
+    // ── HORARIO DE ATENCIÓN ───────────────────────────────────────────────────
+if (!isBusinessOpen(business)) {
+  const { open_time, close_time } = business
+  await sendMessage(from,
+    `⏰ En este momento estamos cerrados. Nuestro horario es de ${open_time?.slice(0,5)} a ${close_time?.slice(0,5)}. ¡Escríbenos cuando estemos disponibles!`
+  )
+  return
+}
 
     // ── PROCESAR MENSAJE DEL CLIENTE ──────────────────────────────────────────
     let userText = ''
@@ -279,8 +287,24 @@ router.post('/', async (req, res) => {
       .select('*')
       .eq('id', customer.id)
       .single()
+      // Después de obtener freshCustomer, antes de handleState
+if (freshCustomer.state === 'ENTREGADO') {
+  const lastActivity = new Date(freshCustomer.last_activity)
+  const minutesPassed = (Date.now() - lastActivity.getTime()) / 1000 / 60
 
-    await handleState(freshCustomer, business, userText, hasMedia, sendMessage)
+  if (minutesPassed >= 15) {
+    await supabase
+      .from('customers')
+      .update({ state: 'NUEVO', state_data: {}, last_activity: new Date().toISOString() })
+      .eq('id', freshCustomer.id)
+
+    const resetCustomer = { ...freshCustomer, state: 'NUEVO', state_data: {} }
+    await handleState(resetCustomer, business, userText, hasMedia, sendMessage)
+    return
+  }
+}
+
+await handleState(freshCustomer, business, userText, hasMedia, sendMessage)
 
   } catch (err) {
     console.error('Error procesando mensaje:', err.message)
