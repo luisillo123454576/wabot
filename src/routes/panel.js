@@ -122,5 +122,39 @@ router.get('/customers', async (req, res) => {
   if (error) return res.status(500).json({ error })
   res.json(data)
 })
+router.patch('/products/:id', async (req, res) => {
+  const { id } = req.params
+  const { is_available } = req.body
 
+  const { error } = await supabase
+    .from('products')
+    .update({ is_available })
+    .eq('id', id)
+
+  if (error) return res.status(500).json({ error })
+  res.json({ success: true })
+})
+// POST /api/panel/login
+router.post('/login', async (req, res) => {
+  const { email, password } = req.body
+
+  const { data, error } = await supabase.auth.signInWithPassword({ email, password })
+
+  if (error) return res.status(401).json({ error: 'Credenciales incorrectas' })
+
+  // Buscar el negocio asociado al email
+  const { data: business } = await supabase
+    .from('businesses')
+    .select('id, name, owner_phone')
+    .eq('owner_email', data.user.email)
+    .single()
+
+  if (!business) return res.status(404).json({ error: 'No hay negocio asociado a este usuario' })
+
+  res.json({
+    token: data.session.access_token,
+    business_id: business.id,
+    business_name: business.name
+  })
+})
 module.exports = router
