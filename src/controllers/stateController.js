@@ -93,13 +93,10 @@ async function handleMenuEnviado(customer, business, userMessage, sendMessage) {
     return
   }
 
-  await sendMessage(customer.phone_number,
-    pickRandom([
-      '¿Qué deseas pedir? 😊',
-      '¿Qué te provoca hoy?',
-      'Dime qué vas a querer y te ayudo 🙌'
-    ])
-  )
+  // Fallback — intentar detectar productos directamente
+  await updateCustomerState(customer.id, 'ARMANDO_PEDIDO', { items: [] })
+  const updatedCustomer = { ...customer, state: 'ARMANDO_PEDIDO', state_data: { items: [] } }
+  await handleArmandoPedido(updatedCustomer, business, userMessage, sendMessage)
 }
 
 async function handleArmandoPedido(customer, business, userMessage, sendMessage) {
@@ -262,10 +259,10 @@ async function handleEsperandoDireccion(customer, business, userMessage, sendMes
       `Paga por: ${business.payment_info || 'Nequi 3235949088'}\n\n` +
       `Envía el comprobante para confirmar. 📸`
     )
-  } else {
-    await sendMessage(customer.phone_number,
-      '📍 No pude reconocer esa dirección. Escríbela mas o menos asi:\n*Calle 35 #3-20, Barrio Centro*'
-    )
+   } else {
+    const reply = await generateFreeResponse(business.ai_context, text, customer.state, customer.state_data)
+    await sendMessage(customer.phone_number, reply)
+    await sendMessage(customer.phone_number, '📍 Cuando estés listo, escríbeme tu dirección de entrega.')
   }
 }
 async function handleEsperandoPago(customer, business, userMessage, hasMedia, sendMessage) {
