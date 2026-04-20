@@ -67,7 +67,7 @@ async function handleNuevo(customer, business, sendMessage) {
 }
 
 async function handleMenuEnviado(customer, business, userMessage, sendMessage) {
-  const intent = await classifyIntent('MENU_ENVIADO', userMessage)
+  const intent = await classifyIntent('MENU_ENVIADO', userMessage, business.id)
 
   if (intent === 'VER_MENU') {
     const { data: products } = await supabase
@@ -88,7 +88,7 @@ async function handleMenuEnviado(customer, business, userMessage, sendMessage) {
   }
 
   if (intent === 'PREGUNTA_LIBRE') {
-    const reply = await generateFreeResponse(business.ai_context, userMessage, customer.state, customer.state_data)
+    const reply = await generateFreeResponse(business.ai_context, userMessage, customer.state, customer.state_data, business.id)
     await sendMessage(customer.phone_number, reply)
     return
   }
@@ -103,7 +103,7 @@ async function handleArmandoPedido(customer, business, userMessage, sendMessage)
   const stateData = customer.state_data || { items: [] }
   const currentItems = stateData.items || []
 
-  const intent = await classifyIntent('ARMANDO_PEDIDO', userMessage)
+  const intent = await classifyIntent('ARMANDO_PEDIDO', userMessage, business.id)
 
   if (intent === 'CANCELAR') {
     await updateCustomerState(customer.id, 'CANCELADO', { reason: 'cliente canceló', cancelled_by: 'cliente' })
@@ -207,7 +207,7 @@ async function handleEsperandoDireccion(customer, business, userMessage, sendMes
   if (score >= 80) {
     esDireccion = true
   } else if (score >= 20) {
-    esDireccion = await isValidAddress(text)
+    esDireccion = await isValidAddress(text, business.id)
   }
 
   if (esDireccion) {
@@ -221,7 +221,7 @@ async function handleEsperandoDireccion(customer, business, userMessage, sendMes
   )
 } else {
     // No parece dirección — IA responde y redirige
-    const reply = await generateFreeResponse(business.ai_context, text, customer.state, customer.state_data)
+    const reply = await generateFreeResponse(business.ai_context, text, customer.state, customer.state_data, business.id)
     await sendMessage(customer.phone_number, reply)
     await sendMessage(customer.phone_number, '📍 Cuando estés listo, escríbeme tu dirección de entrega.')
   }
@@ -266,7 +266,7 @@ if (isConfirmByRegex) {
   }
 
   // PREGUNTA_LIBRE — IA responde y redirige
-  const reply = await generateFreeResponse(business.ai_context, text, customer.state, stateData)
+  const reply = await generateFreeResponse(business.ai_context, text, customer.state, stateData, business.id)
   await sendMessage(customer.phone_number, reply)
   await sendMessage(customer.phone_number,
     `📍 Dirección anotada: *${stateData.pending_address}*\n\n¿La confirmamos o quieres corregirla?`
@@ -438,26 +438,26 @@ async function handleValidandoPago(customer, business, userMessage, sendMessage)
 async function handleEnPreparacion(customer, business, userMessage, sendMessage) {
   // El cliente escribió mientras cocinan. 
   // NO usamos updateCustomerState. Solo respondemos con IA.
-  const reply = await generateFreeResponse(business.ai_context, userMessage, customer.state, customer.state_data)
+  const reply = await generateFreeResponse(business.ai_context, userMessage, customer.state, customer.state_data, business.id)
   await sendMessage(customer.phone_number, reply);
 }
 
 async function handleEnCamino(customer, business, userMessage, sendMessage) {
   // El cliente escribió mientras el repartidor va hacia allá.
   // NO usamos updateCustomerState. Solo respondemos con IA.
-  const reply = await generateFreeResponse(business.ai_context, userMessage, customer.state, customer.state_data)
+  const reply = await generateFreeResponse(business.ai_context, userMessage, customer.state, customer.state_data, business.id)
   await sendMessage(customer.phone_number, reply);
 }
 
 async function handleEntregado(customer, business, userMessage, sendMessage) {
   // Ya se entregó, pero si el cliente dice "gracias" o "estaba rico", 
   // respondemos amablemente sin mandarle el menú todavía.
-  const intent = await classifyIntent('ENTREGADO', userMessage);
+  const intent = await classifyIntent('ENTREGADO', userMessage, business.id)
   
   if (intent === 'HACER_PEDIDO') {
       await handleNuevo(customer, business, sendMessage);
   } else {
-      const reply = await generateFreeResponse(business.ai_context, userMessage, customer.state, customer.state_data)
+      const reply = await generateFreeResponse(business.ai_context, userMessage, customer.state, customer.state_data, business.id)
       await sendMessage(customer.phone_number, reply);
   }
 }
@@ -521,7 +521,7 @@ async function handleState(customer, business, userMessage, hasMedia, sendMessag
     return await handleEsperandoDireccion(customer, business, userMessage, sendMessage)
   }
 
-  const intent = await classifyIntent(state, userMessage)
+  const intent = await classifyIntent(state, userMessage, business.id)
 
  const NO_REDIRIGIR_MENU = ['NUEVO', 'EN_PREPARACION', 'EN_CAMINO', 'VALIDANDO_PAGO', 'ESPERANDO_PAGO', 'CONFIRMANDO_DIRECCION', 'ENTREGADO']
   const NO_CANCELAR = ['EN_PREPARACION', 'EN_CAMINO', 'VALIDANDO_PAGO', 'ENTREGADO', 'CONFIRMANDO_DIRECCION']
@@ -542,7 +542,7 @@ async function handleState(customer, business, userMessage, hasMedia, sendMessag
 
   case 'MENU_ENVIADO':
     if (intent === 'PREGUNTA_LIBRE') {
-      const reply = await generateFreeResponse(business.ai_context, userMessage, state, customer.state_data)
+      const reply = await generateFreeResponse(business.ai_context, userMessage, state, customer.state_data, business.id)
       await sendMessage(customer.phone_number, reply)
     } else {
       await handleMenuEnviado(customer, business, userMessage, sendMessage)
@@ -598,7 +598,7 @@ async function handleState(customer, business, userMessage, hasMedia, sendMessag
 
     case 'VALIDANDO_PAGO':
       // El nombre de la variable aquí debe ser igual al de abajo
-      const reply = await generateFreeResponse(business.ai_context, userMessage, customer.state, customer.state_data);
+      const reply = await generateFreeResponse(business.ai_context, userMessage, customer.state, customer.state_data, business.id)
       await sendMessage(customer.phone_number, reply); // <--- Aquí quítale el "Validando"
       break
 

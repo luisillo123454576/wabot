@@ -21,7 +21,7 @@ router.get('/', (req, res) => {
 
 // ─── FUNCIÓN DE ENVÍO ─────────────────────────────────────────────────────────
 
-async function sendMessage(to, text) {
+async function sendMessage(to, text, businessId = null) {
   await axios.post(
     `https://graph.facebook.com/v22.0/${process.env.WHATSAPP_PHONE_ID}/messages`,
     {
@@ -37,8 +37,14 @@ async function sendMessage(to, text) {
       }
     }
   )
+  if (businessId) {
+    await supabase.from('wa_messages').insert({
+      business_id: businessId,
+      direction: 'outbound',
+      type: 'text',
+    }).catch(() => {})
+  }
 }
-
 async function sendImage(to, mediaId) {
   await axios.post(
     `https://graph.facebook.com/v22.0/${process.env.WHATSAPP_PHONE_ID}/messages`,
@@ -98,7 +104,12 @@ router.post('/', async (req, res) => {
     }
 
     console.log('✅ Negocio encontrado:', business.name)
-
+    // registrar mensaje entrante
+  await supabase.from('wa_messages').insert({
+  business_id: business.id,
+  direction: 'inbound',
+  type: message.type,
+}).catch(() => {})
     const isOwner = business.owner_phone === from
 
     let customer = null
