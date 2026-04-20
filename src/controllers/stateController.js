@@ -558,44 +558,58 @@ async function handleState(customer, business, userMessage, hasMedia, sendMessag
   case 'CONFIRMANDO_DIRECCION':
   await handleConfirmandoDireccion(customer, business, userMessage, sendMessage)
   break
-    case 'ESPERANDO_PAGO':
-      if (intent === 'PAGO_EFECTIVO') {
-  const stateData = customer.state_data || {}
+    case 'ESPERANDO_PAGO': {
+  const esEfectivo = (() => {
+    const msg = userMessage.toLowerCase()
+      .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    
+    const frasesDirectas = [
+      'pago en efectivo', 'pagar en efectivo', 'pagare en efectivo',
+      'pago al llegar', 'pago contra entrega', 'pago cuando llegue',
+      'en efectivo', 'con efectivo', 'cash',
+      'pago en la puerta', 'pago ahi', 'pago aqui',
+      'lo pago ahi', 'lo pago aqui', 'te pago ahi', 'te pago aqui',
+      'pago a la entrega', 'efectivo por favor', 'con billetes'
+    ]
+    if (frasesDirectas.some(f => msg.includes(f))) return true
 
-  // Crear la orden en Supabase
-  await supabase
-    .from('orders')
-    .update({ state: 'CONFIRMADO', payment_method: 'EFECTIVO' })
-    .eq('id', stateData.order_id)
+    const verboPago = /(pago|pagare|pagaré|pagar|cancelo|cancelaré|abono)/.test(msg)
+    const contextoPago = /(casa|puerta|ahi|aqui|llegue|llegues|entrega|domicilio|llegar|momento)/.test(msg)
+    return verboPago && contextoPago
+  })()
 
-  await updateCustomerState(customer.id, 'EN_PREPARACION')
+  if (esEfectivo || intent === 'PAGO_EFECTIVO') {
+    const stateData = customer.state_data || {}
+    await supabase
+      .from('orders')
+      .update({ state: 'CONFIRMADO', payment_method: 'EFECTIVO' })
+      .eq('id', stateData.order_id)
 
-  // Notificar al dueño
-  const summary = formatCart(stateData.items || [])
-  await sendMessage(business.owner_phone,
-    `🔔 *NUEVO PEDIDO — PAGO EN EFECTIVO*\n\n` +
-    `👤 Cliente: +${customer.phone_number}\n` +
-    `📍 Dirección: ${stateData.address || 'No especificada'}\n` +
-    `🛍️ Pedido:\n${summary}\n` +
-    `💰 Total a cobrar en puerta: $${(stateData.total || 0).toLocaleString('es-CO')}\n\n` +
-    `Responde *en camino* cuando salga el domiciliario.`
-  )
+    await updateCustomerState(customer.id, 'EN_PREPARACION')
 
-  await sendMessage(customer.phone_number,
-    `✅ ¡Listo! Tu pedido está confirmado. Pagas $${(stateData.total || 0).toLocaleString('es-CO')} en efectivo cuando llegue el domiciliario 💵\n\nEstamos preparando tu pedido 🍔 Tiempo estimado: 25-35 min.`
-  )
-  return
+    const summary = formatCart(stateData.items || [])
+    await sendMessage(business.owner_phone,
+      `🔔 *NUEVO PEDIDO — PAGO EN EFECTIVO*\n\n` +
+      `👤 Cliente: +${customer.phone_number}\n` +
+      `📍 Dirección: ${stateData.address || 'No especificada'}\n` +
+      `🛍️ Pedido:\n${summary}\n` +
+      `💰 Total a cobrar en puerta: $${(stateData.total || 0).toLocaleString('es-CO')}\n\n` +
+      `Responde *en camino* cuando salga el domiciliario.`
+    )
+    await sendMessage(customer.phone_number,
+      `✅ ¡Listo! Tu pedido está confirmado. Pagas $${(stateData.total || 0).toLocaleString('es-CO')} en efectivo cuando llegue el domiciliario 💵\n\nEstamos preparando tu pedido 🍔 Tiempo estimado: 25-35 min.`
+    )
+    return
+  }
+
+  if (hasMedia || intent === 'ENVIO_COMPROBANTE') {
+    await handleEsperandoPago(customer, business, userMessage, hasMedia, sendMessage)
+  } else {
+    const reply = await generateFreeResponse(business.ai_context, userMessage, state, customer.state_data)
+    await sendMessage(customer.phone_number, reply)
+  }
+  break
 }
-      // Solo si manda foto o dice que ya pagó
-      if (hasMedia || intent === 'ENVIO_COMPROBANTE') {
-          await handleEsperandoPago(customer, business, userMessage, hasMedia, sendMessage);
-      } else {
-          // Si solo está preguntando "¿dónde pago?", responde la IA cortico
-          const reply = await generateFreeResponse(business.ai_context, userMessage, state, customer.state_data);
-          await sendMessage(customer.phone_number, reply);
-      }
-      break
-
     case 'VALIDANDO_PAGO':
       // El nombre de la variable aquí debe ser igual al de abajo
       const reply = await generateFreeResponse(business.ai_context, userMessage, customer.state, customer.state_data, business.id)
