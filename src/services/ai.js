@@ -47,6 +47,33 @@ Solo la palabra exacta.`
 
 module.exports = { classifyIntent, extractOrderItems, generateFreeResponse, isValidAddress, classifyDireccion }
 // Función 2: extraer ítems del pedido cuando alias no detectó nada
+async function extractAddress(userMessage) {
+  const response = await groq.chat.completions.create({
+    model: 'llama-3.1-8b-instant',
+    max_tokens: 50,
+    messages: [
+      {
+        role: 'system',
+        content: `Eres un extractor de direcciones. 
+REGLAS ABSOLUTAS:
+1. Extrae ÚNICAMENTE la dirección de entrega del texto.
+2. Devuelve SOLO la dirección, sin puntos, sin comillas, sin explicación, sin palabras extra.
+3. Si el texto contiene "quiero corregirla era Calle 35#3", devuelves: Calle 35#3
+4. Si el texto YA ES una dirección limpia como "Calle 35#3 este 20", devuelves: Calle 35#3 este 20
+5. NUNCA devuelvas frases como "la dirección es..." o "aquí está...".
+6. Si no encuentras ninguna dirección, devuelve: NONE`
+      },
+      {
+        role: 'user',
+        content: userMessage
+      }
+    ]
+  })
+  const result = response.choices[0].message.content.trim()
+  return result === 'NONE' ? null : result
+}
+
+module.exports = { classifyIntent, extractOrderItems, generateFreeResponse, isValidAddress, classifyDireccion, extractAddress }
 async function extractOrderItems(userMessage, menuItems) {
   const menuList = menuItems.map(p => `- "${p.name}"`).join('\n')
 

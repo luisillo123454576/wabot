@@ -1,5 +1,5 @@
 const supabase = require('../services/supabase')
-const { classifyIntent, generateFreeResponse, isValidAddress, classifyDireccion } = require('../services/ai')
+const { classifyIntent, generateFreeResponse, isValidAddress, classifyDireccion, extractAddress } = require('../services/ai')
 const { detectOrderItems } = require('../services/messageDetector')
 
 // ─── UTILIDADES ───────────────────────────────────────────────────────────────
@@ -211,15 +211,15 @@ async function handleEsperandoDireccion(customer, business, userMessage, sendMes
   }
 
   if (esDireccion) {
-    // Guardar dirección temporal y pedir confirmación
-    await updateCustomerState(customer.id, 'CONFIRMANDO_DIRECCION', {
-      ...customer.state_data,
-      pending_address: text
-    })
-    await sendMessage(customer.phone_number,
-      `📍 Dirección anotada: *${text}*\n\n¿La confirmamos o quieres corregirla?`
-    )
-  } else {
+  const cleanAddress = await extractAddress(text) || text
+  await updateCustomerState(customer.id, 'CONFIRMANDO_DIRECCION', {
+    ...customer.state_data,
+    pending_address: cleanAddress
+  })
+  await sendMessage(customer.phone_number,
+    `📍 Dirección anotada: *${cleanAddress}*\n\n¿La confirmamos o quieres corregirla?`
+  )
+} else {
     // No parece dirección — IA responde y redirige
     const reply = await generateFreeResponse(business.ai_context, text, customer.state, customer.state_data)
     await sendMessage(customer.phone_number, reply)
@@ -523,14 +523,14 @@ async function handleState(customer, business, userMessage, hasMedia, sendMessag
 
   const intent = await classifyIntent(state, userMessage)
 
-  if (intent === 'CANCELAR' && state !== 'ENTREGADO') {
-    await updateCustomerState(customer.id, 'NUEVO', {})
-    return await sendMessage(customer.phone_number, "Pedido cancelado. ¿En qué puedo ayudarte ahora?")
-  }
+  if (intent === 'CANCELAR' && state !== 'ENTREGADO' && state !== 'CONFIRMANDO_DIRECCION') {
+  await updateCustomerState(customer.id, 'NUEVO', {})
+  return await sendMessage(customer.phone_number, "Pedido cancelado. ¿En qué puedo ayudarte ahora?")
+}
   
-  if (intent === 'VER_MENU' && state !== 'NUEVO' && state !== 'ENTREGADO') {
-    return await handleNuevo(customer, business, sendMessage)
-  }
+  if (intent === 'VER_MENU' && state !== 'NUEVO' && state !== 'ENTREGADO' && state !== 'CONFIRMANDO_DIRECCION') {
+  return await handleNuevo(customer, business, sendMessage)
+}
 
   // --- 2. EL SWITCH DE ESTADOS ---
   switch (state) {
