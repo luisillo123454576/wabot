@@ -72,8 +72,6 @@ REGLAS ABSOLUTAS:
   const result = response.choices[0].message.content.trim()
   return result === 'NONE' ? null : result
 }
-
-module.exports = { classifyIntent, extractOrderItems, generateFreeResponse, isValidAddress, classifyDireccion, extractAddress }
 async function extractOrderItems(userMessage, menuItems) {
   const menuList = menuItems.map(p => `- "${p.name}"`).join('\n')
 
@@ -176,4 +174,4 @@ ESTADO ACTUAL DEL CLIENTE: ${stateContext}`
 
   return response.choices[0].message.content.trim()
 }
-module.exports = { classifyIntent, extractOrderItems, generateFreeResponse, isValidAddress }
+module.exports = { classifyIntent, extractOrderItems, generateFreeResponse, isValidAddress, classifyDireccion, extractAddress }
