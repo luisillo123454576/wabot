@@ -114,23 +114,34 @@ Si no encuentras ningún producto válido: {"items":[]}`
   }
 }
 // NUEVA Función: Validar si el texto es una dirección (IA como Fallback)
-async function isValidAddress(userMessage) {
+async function extractAddress(userMessage) {
   const response = await groq.chat.completions.create({
     model: 'llama-3.1-8b-instant',
-    max_tokens: 10,
+    max_tokens: 60,
     messages: [
       {
         role: 'system',
-        content: 'Eres un validador de direcciones. Responde "SI" si el texto parece una dirección de entrega. Responde "NO" si es un comentario, duda o saludo.'
+        content: `Eres un extractor de direcciones de entrega.
+REGLAS ABSOLUTAS:
+1. Extrae ÚNICAMENTE la dirección completa incluyendo: calle, número, barrio, sector, referencias adicionales si las hay.
+2. Devuelve SOLO la dirección limpia, sin puntos finales, sin comillas, sin explicación, sin palabras extra.
+3. Ejemplos:
+   - "quiero corregirla era calle 35#3 este 20 barrio villa brazil" → Calle 35#3 Este 20 Barrio Villa Brazil
+   - "mi dirección es carrera 10 #20-30 apto 301 barrio centro" → Carrera 10 #20-30 Apto 301 Barrio Centro
+   - "calle 35#3" → Calle 35#3
+   - "es la diagonal 45 sur con carrera 8 esquina" → Diagonal 45 Sur con Carrera 8 Esquina
+4. NUNCA recortes el barrio, sector, apto, piso ni referencias.
+5. NUNCA devuelvas frases como "la dirección es..." o "aquí está...".
+6. Si no encuentras ninguna dirección, devuelve: NONE`
       },
       {
         role: 'user',
-        content: `¿Es esto una dirección?: "${userMessage}"`
+        content: userMessage
       }
     ]
-  });
-  const result = response.choices[0].message.content.trim().toUpperCase();
-  return result.includes('SI');
+  })
+  const result = response.choices[0].message.content.trim()
+  return result === 'NONE' ? null : result
 }
 
 // Función 3: respuesta libre para preguntas fuera del flujo
