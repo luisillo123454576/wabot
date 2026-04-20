@@ -104,12 +104,14 @@ router.post('/', async (req, res) => {
     }
 
     console.log('✅ Negocio encontrado:', business.name)
-    // registrar mensaje entrante
+  // registrar mensaje entrante
+try {
   await supabase.from('wa_messages').insert({
-  business_id: business.id,
-  direction: 'inbound',
-  type: message.type,
-}).catch(() => {})
+    business_id: business.id,
+    direction: 'inbound',
+    type: message.type,
+  })
+} catch (_) {}
     const isOwner = business.owner_phone === from
 
     let customer = null
