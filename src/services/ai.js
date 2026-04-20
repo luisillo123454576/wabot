@@ -30,7 +30,22 @@ Responde solo la palabra exacta. Sin explicacion.`
 
   return response.choices[0].message.content.trim()
 }
+async function classifyDireccion(userMessage) {
+  const response = await groq.chat.completions.create({
+    model: 'llama-3.1-8b-instant',
+    max_tokens: 10,
+    messages: [{
+      role: 'user',
+      content: `El usuario acaba de recibir la pregunta "¿Confirmamos la dirección o quieres corregirla?"
+Su respuesta fue: "${userMessage}"
+Clasifica en UNA opción: CONFIRMAR / NUEVA_DIRECCION / PREGUNTA_LIBRE
+Solo la palabra exacta.`
+    }]
+  })
+  return response.choices[0].message.content.trim().toUpperCase()
+}
 
+module.exports = { classifyIntent, extractOrderItems, generateFreeResponse, isValidAddress, classifyDireccion }
 // Función 2: extraer ítems del pedido cuando alias no detectó nada
 async function extractOrderItems(userMessage, menuItems) {
   const menuList = menuItems.map(p => `- "${p.name}"`).join('\n')

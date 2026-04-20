@@ -1,5 +1,5 @@
 const supabase = require('../services/supabase')
-const { classifyIntent, generateFreeResponse } = require('../services/ai')
+const { classifyIntent, generateFreeResponse, isValidAddress, classifyDireccion } = require('../services/ai')
 const { detectOrderItems } = require('../services/messageDetector')
 
 // ─── UTILIDADES ───────────────────────────────────────────────────────────────
@@ -197,16 +197,6 @@ async function handleArmandoPedido(customer, business, userMessage, sendMessage)
 async function handleEsperandoDireccion(customer, business, userMessage, sendMessage) {
   const text = userMessage.trim()
 
-  // Intents especiales antes de validar dirección
-  const intent = await classifyIntent('ESPERANDO_DIRECCION', userMessage)
-
-  if (intent === 'CANCELAR') {
-    await updateCustomerState(customer.id, 'NUEVO', {})
-    await sendMessage(customer.phone_number, 'Pedido cancelado. ¡Escríbenos cuando quieras! 👋')
-    return
-  }
-
-  // Score heurístico
   const addressRegex = /(calle|cll|cl|carrera|cra|cr|diagonal|dg|transversal|tv|avenida|av|barrio|br|mz|manzana|casa|lote|sector|apto|piso|este|oeste|norte|sur)\s?\d+|[#\-\d]{3,}/i
   let score = 0
   if (addressRegex.test(text)) score += 60
@@ -218,52 +208,104 @@ async function handleEsperandoDireccion(customer, business, userMessage, sendMes
     esDireccion = true
   } else if (score >= 20) {
     esDireccion = await isValidAddress(text)
-  } else {
-    // Texto claramente no es dirección — IA responde y redirige
-    const reply = await generateFreeResponse(business.ai_context, text, customer.state, customer.state_data)
-    await sendMessage(customer.phone_number, reply)
-    await sendMessage(customer.phone_number, '📍 Cuando estés listo, escríbeme tu dirección de entrega.')
-    return
   }
 
   if (esDireccion) {
-    const stateData = customer.state_data || { items: [] }
-    const items = stateData.items || []
-    const subtotal = items.reduce((acc, i) => acc + i.subtotal, 0)
-    const totalFinal = subtotal + 3000
-
-    const { data: order } = await supabase
-      .from('orders')
-      .insert({
-        business_id: business.id,
-        customer_id: customer.id,
-        items,
-        total: totalFinal,
-        delivery_address: text,
-        state: 'PENDIENTE'
-      })
-      .select().single()
-
-    await updateCustomerState(customer.id, 'ESPERANDO_PAGO', {
-      order_id: order.id,
-      items,
-      total: totalFinal,
-      address: text
+    // Guardar dirección temporal y pedir confirmación
+    await updateCustomerState(customer.id, 'CONFIRMANDO_DIRECCION', {
+      ...customer.state_data,
+      pending_address: text
     })
-
     await sendMessage(customer.phone_number,
-      `📍 Dirección guardada: ${text}\n\n` +
-      `Resumen:\n${formatCart(items)}\n` +
-      `Domicilio: $3.000\n` +
-      `TOTAL: $${totalFinal.toLocaleString('es-CO')}\n\n` +
-      `Paga por: ${business.payment_info || 'Nequi 3235949088'}\n\n` +
-      `Envía el comprobante para confirmar. 📸`
+      `📍 Dirección anotada: *${text}*\n\n¿La confirmamos o quieres corregirla?`
     )
-   } else {
+  } else {
+    // No parece dirección — IA responde y redirige
     const reply = await generateFreeResponse(business.ai_context, text, customer.state, customer.state_data)
     await sendMessage(customer.phone_number, reply)
     await sendMessage(customer.phone_number, '📍 Cuando estés listo, escríbeme tu dirección de entrega.')
   }
+}
+
+async function handleConfirmandoDireccion(customer, business, userMessage, sendMessage) {
+  const text = userMessage.trim()
+  const stateData = customer.state_data || {}
+
+  // ── Regex de confirmación ──────────────────────────────────────────────────
+  const confirmRegex = /^(si|sí|s[ií]|yes|dale|listo|correcto|ok|okay|confirmad[ao]|así es|exacto|confirm[ao])$/i
+  const isConfirmByRegex = confirmRegex.test(text.toLowerCase())
+
+  // ── Regex de nueva dirección ───────────────────────────────────────────────
+  const addressRegex = /(calle|cll|cl|carrera|cra|cr|diagonal|dg|transversal|tv|avenida|av|barrio|br|mz|manzana|casa|lote|sector|apto|piso|este|oeste|norte|sur)\s?\d+|[#\-\d]{3,}/i
+  let addressScore = 0
+  if (addressRegex.test(text)) addressScore += 60
+  if (text.length > 12) addressScore += 20
+  if (/\d+/.test(text)) addressScore += 20
+  const isNewAddress = addressScore >= 60
+
+  let action = null
+if (isConfirmByRegex) {
+    action = 'CONFIRMAR'
+  } else if (isNewAddress) {
+    action = 'NUEVA_DIRECCION'
+  } else {
+    action = await classifyDireccion(text)
+  }
+
+  if (action === 'CONFIRMAR') {
+    await guardarDireccionYPasar(customer, business, stateData.pending_address, sendMessage)
+    return
+  }
+
+  if (action === 'NUEVA_DIRECCION') {
+    // Volver a ESPERANDO_DIRECCION con el nuevo texto
+    const updatedCustomer = { ...customer, state: 'ESPERANDO_DIRECCION' }
+    await updateCustomerState(customer.id, 'ESPERANDO_DIRECCION', { ...stateData, pending_address: null })
+    await handleEsperandoDireccion(updatedCustomer, business, text, sendMessage)
+    return
+  }
+
+  // PREGUNTA_LIBRE — IA responde y redirige
+  const reply = await generateFreeResponse(business.ai_context, text, customer.state, stateData)
+  await sendMessage(customer.phone_number, reply)
+  await sendMessage(customer.phone_number,
+    `📍 Dirección anotada: *${stateData.pending_address}*\n\n¿La confirmamos o quieres corregirla?`
+  )
+}
+
+async function guardarDireccionYPasar(customer, business, address, sendMessage) {
+  const stateData = customer.state_data || {}
+  const items = stateData.items || []
+  const subtotal = items.reduce((acc, i) => acc + i.subtotal, 0)
+  const totalFinal = subtotal + 3000
+
+  const { data: order } = await supabase
+    .from('orders')
+    .insert({
+      business_id: business.id,
+      customer_id: customer.id,
+      items,
+      total: totalFinal,
+      delivery_address: address,
+      state: 'PENDIENTE'
+    })
+    .select().single()
+
+  await updateCustomerState(customer.id, 'ESPERANDO_PAGO', {
+    order_id: order.id,
+    items,
+    total: totalFinal,
+    address
+  })
+
+  await sendMessage(customer.phone_number,
+    `📍 Dirección confirmada: ${address}\n\n` +
+    `Resumen:\n${formatCart(items)}\n` +
+    `Domicilio: $3.000\n` +
+    `TOTAL: $${totalFinal.toLocaleString('es-CO')}\n\n` +
+    `Paga por: ${business.payment_info || 'Nequi 3235949088'}\n\n` +
+    `Envía el comprobante para confirmar. 📸`
+  )
 }
 async function handleEsperandoPago(customer, business, userMessage, hasMedia, sendMessage) {
   const intent = await classifyIntent('ESPERANDO_PAGO', userMessage)
@@ -504,14 +546,16 @@ async function handleState(customer, business, userMessage, hasMedia, sendMessag
       await handleMenuEnviado(customer, business, userMessage, sendMessage)
     }
     break
-
+  
   case 'ARMANDO_PEDIDO':
     // Aquí la IA NO responde preguntas libres
     // Todo mensaje se intenta interpretar como producto
     // Si no reconoce nada, handleArmandoPedido muestra el menú y pregunta de nuevo
     await handleArmandoPedido(customer, business, userMessage, sendMessage)
     break
-
+  case 'CONFIRMANDO_DIRECCION':
+  await handleConfirmandoDireccion(customer, business, userMessage, sendMessage)
+  break
     case 'ESPERANDO_PAGO':
       if (intent === 'PAGO_EFECTIVO') {
   const stateData = customer.state_data || {}
