@@ -523,15 +523,17 @@ async function handleState(customer, business, userMessage, hasMedia, sendMessag
 
   const intent = await classifyIntent(state, userMessage)
 
-  if (intent === 'CANCELAR' && state !== 'ENTREGADO' && state !== 'CONFIRMANDO_DIRECCION') {
-  await updateCustomerState(customer.id, 'NUEVO', {})
-  return await sendMessage(customer.phone_number, "Pedido cancelado. ¿En qué puedo ayudarte ahora?")
-}
-  
-  if (intent === 'VER_MENU' && state !== 'NUEVO' && state !== 'ENTREGADO' && state !== 'CONFIRMANDO_DIRECCION') {
-  return await handleNuevo(customer, business, sendMessage)
-}
+ const NO_REDIRIGIR_MENU = ['NUEVO', 'EN_PREPARACION', 'EN_CAMINO', 'VALIDANDO_PAGO', 'ESPERANDO_PAGO', 'CONFIRMANDO_DIRECCION', 'ENTREGADO']
+  const NO_CANCELAR = ['EN_PREPARACION', 'EN_CAMINO', 'VALIDANDO_PAGO', 'ENTREGADO', 'CONFIRMANDO_DIRECCION']
 
+  if (intent === 'CANCELAR' && !NO_CANCELAR.includes(state)) {
+    await updateCustomerState(customer.id, 'NUEVO', {})
+    return await sendMessage(customer.phone_number, 'Pedido cancelado. ¿En qué puedo ayudarte ahora?')
+  }
+
+  if (intent === 'VER_MENU' && !NO_REDIRIGIR_MENU.includes(state)) {
+    return await handleNuevo(customer, business, sendMessage)
+  }
   // --- 2. EL SWITCH DE ESTADOS ---
   switch (state) {
   case 'NUEVO':
