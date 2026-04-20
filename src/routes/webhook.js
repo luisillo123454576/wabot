@@ -262,7 +262,7 @@ if (!isBusinessOpen(business)) {
 
     } else if (message.type === 'audio') {
       console.log('Audio recibido, transcribiendo...')
-      userText = await transcribeAudio(message.audio.id)
+      userText = await transcribeAudio(message.audio.id, business.id)
       console.log('Transcripción:', userText)
 
     } else if (message.type === 'image') {

@@ -2,18 +2,16 @@ const axios = require('axios')
 const Groq = require('groq-sdk')
 const fs = require('fs')
 const path = require('path')
+const supabase = require('./supabase')
 
 const groq = new Groq({ apiKey: process.env.GROQ_API_KEY })
 
-async function transcribeAudio(mediaId) {
+async function transcribeAudio(mediaId, businessId = null) {
   // Paso 1: obtener la URL del audio desde Meta
   const mediaResponse = await axios.get(
     `https://graph.facebook.com/v22.0/${mediaId}`,
-    {
-      headers: { Authorization: `Bearer ${process.env.WHATSAPP_TOKEN}` }
-    }
+    { headers: { Authorization: `Bearer ${process.env.WHATSAPP_TOKEN}` } }
   )
-
   const audioUrl = mediaResponse.data.url
 
   // Paso 2: descargar el archivo de audio
@@ -35,6 +33,15 @@ async function transcribeAudio(mediaId) {
 
   // Paso 5: limpiar archivo temporal
   fs.unlinkSync(tempPath)
+
+  // Paso 6: registrar en Supabase
+  await supabase.from('transcriptions').insert({
+    media_id: mediaId,
+    business_id: businessId,
+    text: transcription.text,
+    model: 'whisper-large-v3-turbo',
+    created_at: new Date().toISOString()
+  })
 
   return transcription.text
 }
