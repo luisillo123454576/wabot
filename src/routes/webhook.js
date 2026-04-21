@@ -291,51 +291,47 @@ if (!isBusinessOpen(business)) {
         await sendImage(business.owner_phone, message.image.id)
       }
     }
+    // ── OBTENER FRESH CUSTOMER ────────────────────────────────────────────────
+const { data: freshCustomer } = await supabase
+  .from('customers')
+  .select('*')
+  .eq('id', customer.id)
+  .single()
 
-    await supabase
-      .from('customers')
-      .update({ last_activity: new Date().toISOString() })
-      .eq('id', customer.id)
+// ── RESET AUTOMÁTICO POR INACTIVIDAD ─────────────────────────────────────
+const RESET_RULES = {
+  'ENTREGADO':             15,
+  'MENU_ENVIADO':          20,
+  'ARMANDO_PEDIDO':        45,
+  'ESPERANDO_DIRECCION':   30,
+  'CONFIRMANDO_DIRECCION': 30,
+  'ESPERANDO_PAGO':        120,
+  'VALIDANDO_PAGO':        240,
+  'EN_PREPARACION':        180,
+  'EN_CAMINO':             120,
+}
 
-    const { data: freshCustomer } = await supabase
-      .from('customers')
-      .select('*')
-      .eq('id', customer.id)
-      .single()
+const resetMinutes = RESET_RULES[freshCustomer.state]
+if (resetMinutes) {
+  const minutesPassed = (Date.now() - new Date(freshCustomer.last_activity).getTime()) / 1000 / 60
+  if (minutesPassed >= resetMinutes) {
+    await supabase.from('customers')
+      .update({ state: 'NUEVO', state_data: {}, last_activity: new Date().toISOString() })
+      .eq('id', freshCustomer.id)
+    const resetCustomer = { ...freshCustomer, state: 'NUEVO', state_data: {} }
+    await handleState(resetCustomer, business, userText, hasMedia, sendMessage)
+    return
+  }
+}
+// ─────────────────────────────────────────────────────────────────────────
 
-    // ── RESET AUTOMÁTICO POR INACTIVIDAD ───────────────────────────────────
-    const RESET_RULES = {
-      'ENTREGADO':             15,
-      'MENU_ENVIADO':          20,
-      'ARMANDO_PEDIDO':        45,
-      'ESPERANDO_DIRECCION':   30,
-      'CONFIRMANDO_DIRECCION': 30,
-      'ESPERANDO_PAGO':        120,
-      'VALIDANDO_PAGO':        240,
-      'EN_PREPARACION':        180,
-      'EN_CAMINO':             120,
-    }
+// Actualizar last_activity DESPUÉS del chequeo de reset
+await supabase
+  .from('customers')
+  .update({ last_activity: new Date().toISOString() })
+  .eq('id', customer.id)
 
-    const resetMinutes = RESET_RULES[freshCustomer.state]
-    if (resetMinutes) {
-      const minutesPassed = (Date.now() - new Date(freshCustomer.last_activity).getTime()) / 1000 / 60
-      if (minutesPassed >= resetMinutes) {
-        await supabase.from('customers')
-          .update({ state: 'NUEVO', state_data: {}, last_activity: new Date().toISOString() })
-          .eq('id', freshCustomer.id)
-        const resetCustomer = { ...freshCustomer, state: 'NUEVO', state_data: {} }
-        await handleState(resetCustomer, business, userText, hasMedia, sendMessage)
-        return
-      }
-    }
-    // ───────────────────────────────────────────────────────────────────────
-
-    await supabase
-      .from('customers')
-      .update({ last_activity: new Date().toISOString() })
-      .eq('id', customer.id)
-
-    await handleState(freshCustomer, business, userText, hasMedia, sendMessage)
+await handleState(freshCustomer, business, userText, hasMedia, sendMessage)
 
   } catch (err) {
     console.error('Error procesando mensaje:', err.message)
