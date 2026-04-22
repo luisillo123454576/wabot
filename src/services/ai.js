@@ -51,10 +51,11 @@ Clasifica en UNA de estas opciones:
 HACER_PEDIDO
 VER_MENU
 CONFIRMAR       (ejemplos: "listo", "eso es todo", "no mas", "ya esta", "confirmo")
-CANCELAR        (ejemplos: "cancela", "no quiero nada", "dejalo", "olvida")
+CANCELAR        (ejemplos: "cancela todo", "no quiero nada", "dejalo", "olvida el pedido" — SOLO si cancela TODO el pedido, no un producto específico)
+MODIFICAR_CARRITO (ejemplos: "quita estas", "saca estas", "elimina estas", "cambia esta por esta", "no quiero esto/esta", "era esto no eso", "quita eso", "borra el ultimo", "borra el primer producto" — SOLO si se refiere a modificar el carrito, no a cancelar todo el pedido)
 ENVIO_COMPROBANTE
 REPETIR_PEDIDO
-PAGO_EFECTIVO   (ejemplos: "pago en efectivo", "pago al llegar", "pago contra entrega", "en efectivo", "cash", "cuando llegue pago")
+PAGO_EFECTIVO
 PREGUNTA_LIBRE
 
 Responde solo la palabra exacta. Sin explicacion.`
@@ -165,7 +166,7 @@ async function isValidAddress(userMessage, businessId = null) {
   }
 }
 
-async function generateFreeResponse(businessContext, userMessage, currentState = null, stateData = null, businessId = null) {
+async function generateFreeResponse(businessContext, userMessage, currentState = null, stateData = null, businessId = null, prepTime = null) {
   try {
     const stateDescriptions = {
   'MENU_ENVIADO': `El cliente acaba de recibir el menú y está decidiendo qué pedir.
@@ -198,10 +199,10 @@ TU ÚNICA FUNCIÓN: decirle que espere la confirmación pacientemente.
 PROHIBIDO: confirmar el pago tú mismo, dar tiempos exactos, hablar de otros temas.
 Responde ÚNICAMENTE variaciones de: "Tu pago está en verificación, en un momento te confirmamos ⏳"`,
 
-  'EN_PREPARACION': `El pedido del cliente está siendo preparado en cocina. Tiempo estimado: 25-35 min.
+  'EN_PREPARACION': `El pedido del cliente está siendo preparado en cocina. Tiempo estimado: ${prepTime || '25-35 min'}.
 TU ÚNICA FUNCIÓN: responder preguntas sobre el estado de su pedido con calma y seguridad.
 PROHIBIDO: inventar tiempos exactos, tomar nuevos pedidos, dar precios, salirte del tema del pedido.
-Si pregunta por tiempo responde ÚNICAMENTE: "Tu pedido está en preparación, en 25-35 min está listo 🍔"
+Si pregunta por tiempo responde ÚNICAMENTE: "Tu pedido está en preparación, en ${prepTime || '25-35 min'} está listo 🍔"
 Si la pregunta no es sobre su pedido responde ÚNICAMENTE: "¿Tienes alguna duda sobre tu pedido? 😊"`,
 
   'EN_CAMINO': `El pedido del cliente ya salió y el domiciliario va en camino hacia su dirección.
@@ -245,5 +246,35 @@ ESTADO ACTUAL DEL CLIENTE: ${stateContext}`
     return 'En este momento tengo problemas técnicos. Por favor escríbenos en un momento 🙏'
   }
 }
+async function interpretCartModification(cartSummary, userMessage, businessId = null) {
+  try {
+    const response = await groqCall({
+      model: 'llama-3.1-8b-instant',
+      max_tokens: 200,
+      messages: [
+        {
+          role: 'system',
+          content: `Eres un intérprete de modificaciones de carrito.
+El cliente tiene un carrito con productos y quiere hacer un cambio.
+Tu trabajo: identificar qué product_ids quitar y qué productos nuevos agregar.
+Responde ÚNICAMENTE con JSON, sin texto adicional:
+{"remove": ["product_id_1", "product_id_2"], "add": [{"name": "nombre exacto del producto nuevo", "quantity": 1}]}
+Si no hay nada que quitar: "remove": []
+Si no hay nada que agregar: "add": []`
+        },
+        {
+          role: 'user',
+          content: `Carrito actual:\n${cartSummary}\n\nMensaje del cliente: "${userMessage}"\n\n¿Qué quitar y qué agregar?`
+        }
+      ]
+    })
+    await logAiCall(businessId, 'interpretCartModification', response)
+    const raw = response.choices[0].message.content.trim()
+    const clean = raw.replace(/```json|```/g, '').trim()
+    return JSON.parse(clean)
+  } catch {
+    return { remove: [], add: [] }
+  }
+}
 
-module.exports = { classifyIntent, extractOrderItems, generateFreeResponse, isValidAddress, classifyDireccion, extractAddress }
+module.exports = { classifyIntent, extractOrderItems, generateFreeResponse, isValidAddress, classifyDireccion, extractAddress, interpretCartModification }

@@ -169,25 +169,6 @@ async function detectOrderItems(userMessage, businessId, customerId) {
   }
 
   return { type: 'NOT_FOUND' }
-  // Filtro 1: detección por alias
-const byAlias = await detectByAlias(userMessage, businessId)
-if (byAlias) {
-  return {
-    type: 'FOUND',
-    products: byAlias
-  }
-}
-
-// Filtro 2: extracción por IA
-const byAI = await detectByAI(userMessage, businessId)
-if (byAI) {
-  return {
-    type: 'FOUND',
-    products: byAI
-  }
-}
-
-  return { type: 'NOT_FOUND' }
 }
 
 module.exports = { detectOrderItems, normalizeText }
