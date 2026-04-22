@@ -168,16 +168,55 @@ async function isValidAddress(userMessage, businessId = null) {
 async function generateFreeResponse(businessContext, userMessage, currentState = null, stateData = null, businessId = null) {
   try {
     const stateDescriptions = {
-      'MENU_ENVIADO': 'El cliente acaba de recibir el menú. SOLO responde si pregunta algo específico del menú como ingredientes o alergias. Si dice que quiere algo, responde: "¡Dime qué quieres y lo anoto! 😊"',
-      'ARMANDO_PEDIDO': `El cliente está armando su pedido. Carrito actual: ${stateData?.items?.length > 0 ? stateData.items.map(i => `${i.quantity}x ${i.name}`).join(', ') : 'vacío'}. SOLO confirma lo que hay en el carrito si pregunta. No sugieras productos.`,
-      'ESPERANDO_DIRECCION': 'El cliente debe dar su dirección. SOLO dile que escriba su dirección de entrega. Nada más.',
-      'ESPERANDO_PAGO': `El cliente debe enviar el comprobante. Total: $${(stateData?.total || 0).toLocaleString('es-CO')}. SOLO recuérdale que envíe la foto del comprobante.`,
-      'VALIDANDO_PAGO': 'El pago está en verificación. SOLO dile que espere la confirmación. Máximo 1 línea.',
-      'EN_PREPARACION': 'El pedido está en cocina. SOLO dile que está siendo preparado y el tiempo estimado es 25-35 min.',
-      'EN_CAMINO': 'El pedido va en camino. SOLO dile que el domiciliario ya va hacia allá.',
-      'ENTREGADO': 'El pedido fue entregado. Pregúntale si quiere hacer otro pedido.',
-      'CONFIRMANDO_DIRECCION': 'El cliente está confirmando su dirección. SOLO pregúntale si confirma o quiere corregirla.'
-    }
+  'MENU_ENVIADO': `El cliente acaba de recibir el menú y está decidiendo qué pedir.
+TU ÚNICA FUNCIÓN: responder preguntas puntuales sobre el menú (ingredientes, alergias, porciones).
+Si dice que quiere algo responde ÚNICAMENTE: "¡Dime qué quieres y lo anoto! 😊"
+PROHIBIDO: tomar pedidos, sugerir productos, inventar precios o ingredientes.`,
+
+  'ARMANDO_PEDIDO': `El cliente está armando su pedido. Carrito actual: ${stateData?.items?.length > 0 ? stateData.items.map(i => `${i.quantity}x ${i.name}`).join(', ') : 'vacío'}.
+TU ÚNICA FUNCIÓN: confirmar lo que hay en el carrito si pregunta, o aclarar dudas del menú.
+PROHIBIDO: agregar productos tú mismo, sugerir extras, inventar precios.
+Si quiere agregar algo responde ÚNICAMENTE: "¡Dime qué más quieres y lo anoto! 😊"`,
+
+  'ESPERANDO_DIRECCION': `El cliente debe escribir su dirección de entrega.
+TU ÚNICA FUNCIÓN: pedirle que escriba su dirección completa (calle, número, barrio).
+PROHIBIDO: hablar de precios, pedidos, pagos o cualquier otro tema.
+Responde ÚNICAMENTE variaciones de: "Por favor escríbeme tu dirección de entrega completa 📍"`,
+
+  'CONFIRMANDO_DIRECCION': `El cliente está confirmando su dirección de entrega.
+TU ÚNICA FUNCIÓN: preguntarle si la dirección anotada es correcta o si quiere corregirla.
+PROHIBIDO: hablar de precios, pedidos, pagos o cualquier otro tema.
+Responde ÚNICAMENTE variaciones de: "¿Confirmamos esa dirección o quieres corregirla? 📍"`,
+
+  'ESPERANDO_PAGO': `El cliente debe enviar el comprobante de pago. Total del pedido: $${(stateData?.total || 0).toLocaleString('es-CO')}.
+TU ÚNICA FUNCIÓN: recordarle que envíe la foto del comprobante o que confirme si paga en efectivo.
+PROHIBIDO: confirmar pagos tú mismo, inventar métodos de pago, hablar de otros temas.
+Si pregunta cómo pagar responde ÚNICAMENTE con los métodos disponibles del negocio.`,
+
+  'VALIDANDO_PAGO': `El pago del cliente está siendo verificado por el negocio.
+TU ÚNICA FUNCIÓN: decirle que espere la confirmación pacientemente.
+PROHIBIDO: confirmar el pago tú mismo, dar tiempos exactos, hablar de otros temas.
+Responde ÚNICAMENTE variaciones de: "Tu pago está en verificación, en un momento te confirmamos ⏳"`,
+
+  'EN_PREPARACION': `El pedido del cliente está siendo preparado en cocina. Tiempo estimado: 25-35 min.
+TU ÚNICA FUNCIÓN: responder preguntas sobre el estado de su pedido con calma y seguridad.
+PROHIBIDO: inventar tiempos exactos, tomar nuevos pedidos, dar precios, salirte del tema del pedido.
+Si pregunta por tiempo responde ÚNICAMENTE: "Tu pedido está en preparación, en 25-35 min está listo 🍔"
+Si la pregunta no es sobre su pedido responde ÚNICAMENTE: "¿Tienes alguna duda sobre tu pedido? 😊"`,
+
+  'EN_CAMINO': `El pedido del cliente ya salió y el domiciliario va en camino hacia su dirección.
+TU ÚNICA FUNCIÓN: responder preguntas sobre la entrega con calma y seguridad.
+PROHIBIDO: inventar ubicaciones o tiempos exactos, tomar pedidos, salirte del tema de la entrega.
+Si pregunta dónde está responde ÚNICAMENTE: "El domiciliario ya va en camino, en unos minutos llega 🛵"
+Si la pregunta no es sobre su entrega responde ÚNICAMENTE: "¿Tienes alguna duda sobre tu entrega? 😊"`,
+
+  'ENTREGADO': `El pedido del cliente ya fue entregado exitosamente.
+TU ÚNICA FUNCIÓN: responder amablemente y preguntar si quiere hacer otro pedido.
+PROHIBIDO: mencionar estados anteriores del pedido, inventar información, hablar de pagos pendientes.
+Si agradece: responde calurosamente y pregúntale si quiere pedir de nuevo.
+Si se queja: responde con empatía, dile que tomarán nota y pregúntale si quiere pedir de nuevo.
+Si pregunta cualquier cosa: responde brevemente y redirige a si quiere hacer otro pedido.`
+}
 
     const stateContext = stateDescriptions[currentState] || 'Responde brevemente y redirige al flujo de pedido.'
 
