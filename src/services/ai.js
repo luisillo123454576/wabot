@@ -48,15 +48,52 @@ async function classifyIntent(currentState, userMessage, businessId = null) {
 Mensaje recibido: "${userMessage}"
 
 Clasifica en UNA de estas opciones:
+
 HACER_PEDIDO
+  — El cliente quiere agregar algo nuevo a su pedido.
+  — Ejemplos universales: "quiero 2 de eso", "y 3 más de lo mismo", "también quiero uno", "agrégame otro", "ponme uno de esos", "y uno también", "quiero pedir", "me das uno", "uno de cada uno"
+  — Aplica para cualquier producto de cualquier negocio: comida, ropa, medicamentos, flores, repuestos, lo que sea.
+
 VER_MENU
-CONFIRMAR       (ejemplos: "listo", "eso es todo", "no mas", "ya esta", "confirmo")
-CANCELAR        (ejemplos: "cancela todo", "no quiero nada", "dejalo", "olvida el pedido" — SOLO si cancela TODO el pedido, no un producto específico)
-MODIFICAR_CARRITO (ejemplos: "quita estas", "saca estas", "elimina estas", "cambia esta por esta", "no quiero esto/esta", "era esto no eso", "quita eso", "borra el ultimo", "borra el primer producto" — SOLO si se refiere a modificar el carrito, no a cancelar todo el pedido)
-ENVIO_COMPROBANTE
+  — El cliente quiere ver qué hay disponible.
+  — Ejemplos: "qué tienen", "muestrame lo que hay", "cuál es el menú", "qué ofrecen", "qué productos manejan", "qué servicios tienen", "listado de precios"
+
+CONFIRMAR
+  — El cliente aprueba su pedido actual y quiere proceder.
+  — Ejemplos: "listo", "eso es todo", "no más", "ya está", "confirmo", "ya", "dale", "sí", "de una", "así está bien", "perfecto así"
+
+CANCELAR
+  — El cliente quiere cancelar TODO el pedido completo, no un producto específico.
+  — Ejemplos: "cancela todo", "no quiero nada", "déjalo", "olvida el pedido", "cancela", "no gracias olvídalo"
+  — NUNCA clasificar como CANCELAR si el cliente menciona un producto específico que quiere quitar.
+
+MODIFICAR_CARRITO
+  — El cliente quiere quitar, cambiar o corregir algo que YA está en su pedido.
+  — Ejemplos: "quita el último", "saca eso", "no quiero ese", "cámbialo por otro", "era el otro no ese", "quita uno de esos", "mejor sin eso", "elimina el primero", "no era ese"
+  — NUNCA clasificar como MODIFICAR_CARRITO si el cliente está agregando algo nuevo.
+
 REPETIR_PEDIDO
+  — El cliente quiere repetir un pedido anterior.
+  — Ejemplos: "lo mismo de antes", "repite el pedido", "lo de siempre", "igual que la última vez", "lo mismo que ayer"
+
 PAGO_EFECTIVO
+  — El cliente indica que pagará en efectivo al momento de recibir.
+  — Ejemplos: "pago cuando llegue", "en efectivo", "pago ahí", "al momento de entrega", "cash", "pago a la entrega", "te pago cuando llegues"
+  — NUNCA clasificar como PAGO_EFECTIVO si menciona plataformas digitales, transferencias o apps de pago.
+
+ENVIO_COMPROBANTE
+  — El cliente indica que ya realizó un pago digital y va a enviar o envió prueba.
+  — Ejemplos: "ya pagué", "te mando el comprobante", "ahí va la captura", "hice la transferencia", "ya transferí"
+
 PREGUNTA_LIBRE
+  — Cualquier mensaje que no encaje en las anteriores: dudas, saludos, quejas, preguntas sobre el negocio, horarios, disponibilidad, ingredientes, tiempo de entrega.
+  — Ejemplos: "cuánto demoran", "tienen domicilio", "están abiertos", "de qué es eso", "tienen opciones sin gluten", "a qué hora abren"
+
+REGLAS CRÍTICAS:
+1. Si agrega productos nuevos aunque empiece con "y", "también", "además", "agrégame" → siempre HACER_PEDIDO.
+2. Si menciona un producto específico para quitar o cambiar → siempre MODIFICAR_CARRITO, nunca CANCELAR.
+3. Si hay ambigüedad entre HACER_PEDIDO y MODIFICAR_CARRITO → HACER_PEDIDO.
+4. Si hay ambigüedad entre MODIFICAR_CARRITO y CANCELAR → MODIFICAR_CARRITO.
 
 Responde solo la palabra exacta. Sin explicacion.`
       }]

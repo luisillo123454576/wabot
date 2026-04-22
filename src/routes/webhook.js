@@ -273,13 +273,18 @@ if (!isBusinessOpen(business)) {
     if (message.type === 'text') {
       userText = message.text.body
 
-    } else if (message.type === 'audio') {
-      console.log('Audio recibido, transcribiendo...')
-      userText = await transcribeAudio(message.audio.id, business.id)
-      console.log('Transcripción:', userText)
+   } else if (message.type === 'audio') {
+  console.log('Audio recibido, transcribiendo...')
+  userText = await transcribeAudio(message.audio.id, business.id)
+  console.log('Transcripción:', userText)
+  
+  if (!userText || userText.trim() === '') {
+    await sendMessage(from, 'No pude escuchar bien el audio. ¿Puedes escribirlo o mandarlo de nuevo? 🎙️')
+    return
+  }
 
-    } else if (message.type === 'image') {
-      hasMedia = true
+} else if (message.type === 'image') {
+  hasMedia = true
       userText = 'comprobante_enviado'
 
       if (customer.state === 'VALIDANDO_PAGO') {

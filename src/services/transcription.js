@@ -1,49 +1,42 @@
-const axios = require('axios')
-const Groq = require('groq-sdk')
-const fs = require('fs')
-const path = require('path')
-const supabase = require('./supabase')
-
-const groq = new Groq({ apiKey: process.env.GROQ_API_KEY })
-
 async function transcribeAudio(mediaId, businessId = null) {
-  // Paso 1: obtener la URL del audio desde Meta
-  const mediaResponse = await axios.get(
-    `https://graph.facebook.com/v22.0/${mediaId}`,
-    { headers: { Authorization: `Bearer ${process.env.WHATSAPP_TOKEN}` } }
-  )
-  const audioUrl = mediaResponse.data.url
-
-  // Paso 2: descargar el archivo de audio
-  const audioResponse = await axios.get(audioUrl, {
-    headers: { Authorization: `Bearer ${process.env.WHATSAPP_TOKEN}` },
-    responseType: 'arraybuffer'
-  })
-
-  // Paso 3: guardar temporalmente
   const tempPath = path.join('/tmp', `audio_${mediaId}.ogg`)
-  fs.writeFileSync(tempPath, audioResponse.data)
+  
+  try {
+    const mediaResponse = await axios.get(
+      `https://graph.facebook.com/v22.0/${mediaId}`,
+      { headers: { Authorization: `Bearer ${process.env.WHATSAPP_TOKEN}` } }
+    )
+    const audioUrl = mediaResponse.data.url
 
-  // Paso 4: transcribir con Groq Whisper
-  const transcription = await groq.audio.transcriptions.create({
-    file: fs.createReadStream(tempPath),
-    model: 'whisper-large-v3-turbo',
-    language: 'es'
-  })
+    const audioResponse = await axios.get(audioUrl, {
+      headers: { Authorization: `Bearer ${process.env.WHATSAPP_TOKEN}` },
+      responseType: 'arraybuffer'
+    })
 
-  // Paso 5: limpiar archivo temporal
-  fs.unlinkSync(tempPath)
+    fs.writeFileSync(tempPath, audioResponse.data)
 
-  // Paso 6: registrar en Supabase
-  await supabase.from('transcriptions').insert({
-    media_id: mediaId,
-    business_id: businessId,
-    text: transcription.text,
-    model: 'whisper-large-v3-turbo',
-    created_at: new Date().toISOString()
-  })
+    const transcription = await groq.audio.transcriptions.create({
+      file: fs.createReadStream(tempPath),
+      model: 'whisper-large-v3-turbo',
+      language: 'es'
+    })
 
-  return transcription.text
+    // Registrar en Supabase — no bloquea si falla
+    supabase.from('transcriptions').insert({
+      media_id: mediaId,
+      business_id: businessId,
+      text: transcription.text,
+      model: 'whisper-large-v3-turbo',
+      created_at: new Date().toISOString()
+    }).catch(e => console.error('Error logging transcription:', e.message))
+
+    return transcription.text
+
+  } catch (err) {
+    console.error('Error transcribiendo audio:', err.message)
+    return null
+  } finally {
+    // Siempre limpia el archivo, haya fallado o no
+    if (fs.existsSync(tempPath)) fs.unlinkSync(tempPath)
+  }
 }
-
-module.exports = { transcribeAudio }
