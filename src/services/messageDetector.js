@@ -113,24 +113,62 @@ async function detectByAI(userMessage, businessId) {
 
   return results.length > 0 ? results : null
 }
-
-async function detectOrderItems(userMessage, businessId, customerId) {
+function detectAmbiguity(products, userMessage) {
   const normalized = normalizeText(userMessage)
+  const withNums = wordsToNumbers(normalized + ' ')
 
-  // Filtro 0: ¿es "lo mismo de ayer"?
-  const isRepeat = REPEAT_TRIGGERS.some(trigger =>
-    normalized.includes(normalizeText(trigger))
-  )
-
-  if (isRepeat) {
-    const lastOrder = await detectRepeatOrder(customerId)
-    if (lastOrder) {
-      return { type: 'REPEAT', items: lastOrder.items, total: lastOrder.total }
-    } else {
-      return { type: 'NO_PREVIOUS_ORDER' }
+  // Agrupar productos por término base compartido
+  const groups = {}
+  for (const { product, quantity } of products) {
+    const name = normalizeText(product.name)
+    // Buscar si hay otro producto que contenga el mismo término base
+    for (const { product: other } of products) {
+      if (product.id === other.id) continue
+      const otherName = normalizeText(other.name)
+      // Si comparten palabra base (ej: "hamburguesa")
+      const words = name.split(' ').filter(w => w.length > 4)
+      for (const word of words) {
+        if (otherName.includes(word)) {
+          const key = word
+          if (!groups[key]) groups[key] = { options: [], quantity }
+          if (!groups[key].options.find(p => p.id === product.id)) groups[key].options.push(product)
+          if (!groups[key].options.find(p => p.id === other.id)) groups[key].options.push(other)
+        }
+      }
     }
   }
 
+  const ambiguousGroup = Object.values(groups)[0]
+  return ambiguousGroup && ambiguousGroup.options.length > 1 ? ambiguousGroup : null
+}
+async function detectOrderItems(userMessage, businessId, customerId) {
+  const normalized = normalizeText(userMessage)
+
+  const isRepeat = REPEAT_TRIGGERS.some(trigger =>
+    normalized.includes(normalizeText(trigger))
+  )
+  if (isRepeat) {
+    const lastOrder = await detectRepeatOrder(customerId)
+    if (lastOrder) return { type: 'REPEAT', items: lastOrder.items, total: lastOrder.total }
+    return { type: 'NO_PREVIOUS_ORDER' }
+  }
+
+  const byAlias = await detectByAlias(userMessage, businessId)
+  if (byAlias) {
+    // Detectar ambigüedad — mismo término matcheó múltiples productos
+    const ambiguous = detectAmbiguity(byAlias, userMessage)
+    if (ambiguous) return { type: 'AMBIGUOUS', options: ambiguous.options, quantity: ambiguous.quantity }
+    return { type: 'FOUND', products: byAlias }
+  }
+
+  const byAI = await detectByAI(userMessage, businessId)
+  if (byAI) {
+    const ambiguous = detectAmbiguity(byAI, userMessage)
+    if (ambiguous) return { type: 'AMBIGUOUS', options: ambiguous.options, quantity: ambiguous.quantity }
+    return { type: 'FOUND', products: byAI }
+  }
+
+  return { type: 'NOT_FOUND' }
   // Filtro 1: detección por alias
 const byAlias = await detectByAlias(userMessage, businessId)
 if (byAlias) {

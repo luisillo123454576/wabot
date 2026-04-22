@@ -1,7 +1,6 @@
 const supabase = require('../services/supabase')
 const { classifyIntent, generateFreeResponse, isValidAddress, classifyDireccion, extractAddress } = require('../services/ai')
-const { detectOrderItems } = require('../services/messageDetector')
-
+const { detectOrderItems, normalizeText } = require('../services/messageDetector')
 // ─── UTILIDADES ───────────────────────────────────────────────────────────────
 
 async function updateCustomerState(customerId, newState, stateData = null, savePrevious = false) {
@@ -105,14 +104,51 @@ async function handleArmandoPedido(customer, business, userMessage, sendMessage)
 
   const intent = await classifyIntent('ARMANDO_PEDIDO', userMessage, business.id)
 
-  if (intent === 'CANCELAR') {
-    await updateCustomerState(customer.id, 'CANCELADO', { reason: 'cliente canceló', cancelled_by: 'cliente' })
+  // Detectar corrección antes de clasificar como cancelación
+  const esCorreccion = /^(no|no no|espera|perdon|perdón|me equivoque|era|quise decir|queria|quería|mentira|mentiras)/i.test(userMessage.trim())
+  
+  if (esCorreccion && intent === 'CANCELAR') {
+    const result = await detectOrderItems(userMessage, business.id, customer.id)
+    
+    if (result.type === 'FOUND') {
+      // Reemplazar productos del mismo tipo en el carrito
+      let updatedItems = [...currentItems]
+      for (const { product, quantity } of result.products) {
+        // Quitar todos los productos que compartan palabra base con el nuevo
+        const baseName = normalizeText(product.name).split(' ')[0]
+        updatedItems = updatedItems.filter(i => 
+          !normalizeText(i.name).includes(baseName)
+        )
+        // Agregar el correcto
+        updatedItems.push({
+          product_id: product.id,
+          name: product.name,
+          quantity,
+          price: product.price,
+          subtotal: product.price * quantity
+        })
+      }
+      await updateCustomerState(customer.id, 'ARMANDO_PEDIDO', { items: updatedItems })
+      const summary = formatCart(updatedItems)
+      await sendMessage(customer.phone_number,
+        `✅ Corregido. Tu pedido actualizado:\n\n${summary}\n\n¿Algo más o confirmamos?`
+      )
+      return
+    }
+    // Si no detectó productos, preguntar qué quería
     await sendMessage(customer.phone_number,
-      pickRandom([
-        'Listo, cancelé tu pedido. Cuando quieras volver a pedir aquí estamos 😊',
-        'Pedido cancelado. ¡Vuelve cuando quieras! 👋'
-      ])
+      '¿Cómo quedaría tu pedido? Dime qué quieres exactamente 😊'
     )
+    return
+  }
+
+  if (intent === 'CANCELAR') {
+    // Cancelación real
+    await updateCustomerState(customer.id, 'CANCELADO', { reason: 'cliente canceló' })
+    await sendMessage(customer.phone_number, pickRandom([
+      'Listo, cancelé tu pedido. Cuando quieras volver a pedir aquí estamos 😊',
+      'Pedido cancelado. ¡Vuelve cuando quieras! 👋'
+    ]))
     await updateCustomerState(customer.id, 'NUEVO', {})
     return
   }
@@ -129,7 +165,6 @@ async function handleArmandoPedido(customer, business, userMessage, sendMessage)
     )
     return
   }
-
   if (intent === 'REPETIR_PEDIDO') {
     const result = await detectOrderItems(userMessage, business.id, customer.id)
     if (result.type === 'REPEAT') {
@@ -145,7 +180,6 @@ async function handleArmandoPedido(customer, business, userMessage, sendMessage)
       return
     }
   }
-
   // Detectar ítem del pedido
   const result = await detectOrderItems(userMessage, business.id, customer.id)
 
@@ -180,6 +214,13 @@ async function handleArmandoPedido(customer, business, userMessage, sendMessage)
   )
   return
 }
+  if (result.type === 'AMBIGUOUS') {
+    const optionsList = result.options.map((p, i) => `${i + 1}. ${p.name} — $${Number(p.price).toLocaleString('es-CO')}`).join('\n')
+    await sendMessage(customer.phone_number,
+      `¿Cuál de estas quieres? (${result.quantity} unidades)\n\n${optionsList}\n\nEscríbeme el nombre exacto o el número 😊`
+    )
+    return
+  }
 
   if (result.type === 'NOT_FOUND') {
     const { data: products } = await supabase
