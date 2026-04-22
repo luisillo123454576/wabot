@@ -197,6 +197,29 @@ async function handleArmandoPedido(customer, business, userMessage, sendMessage)
 async function handleEsperandoDireccion(customer, business, userMessage, sendMessage) {
   const text = userMessage.trim()
 
+  // ── Detectar si quiere agregar productos ──────────────────────────────────
+  const result = await detectOrderItems(text, business.id, customer.id)
+  if (result.type === 'FOUND') {
+    const currentItems = customer.state_data?.items || []
+    for (const { product, quantity } of result.products) {
+      const subtotal = product.price * quantity
+      const existingIndex = currentItems.findIndex(i => i.product_id === product.id)
+      if (existingIndex >= 0) {
+        currentItems[existingIndex].quantity += quantity
+        currentItems[existingIndex].subtotal += subtotal
+      } else {
+        currentItems.push({ product_id: product.id, name: product.name, quantity, price: product.price, subtotal })
+      }
+    }
+    await updateCustomerState(customer.id, 'ARMANDO_PEDIDO', { items: currentItems })
+    const summary = formatCart(currentItems)
+    await sendMessage(customer.phone_number,
+      `✅ Agregado. Tu pedido actualizado:\n\n${summary}\n\n¿Algo más o confirmamos?`
+    )
+    return
+  }
+  // ─────────────────────────────────────────────────────────────────────────
+
   const addressRegex = /(calle|cll|cl|carrera|cra|cr|diagonal|dg|transversal|tv|avenida|av|barrio|br|mz|manzana|casa|lote|sector|apto|piso|este|oeste|norte|sur)\s?\d+|[#\-\d]{3,}/i
   let score = 0
   if (addressRegex.test(text)) score += 60
@@ -211,22 +234,20 @@ async function handleEsperandoDireccion(customer, business, userMessage, sendMes
   }
 
   if (esDireccion) {
-  const cleanAddress = await extractAddress(text) || text
-  await updateCustomerState(customer.id, 'CONFIRMANDO_DIRECCION', {
-    ...customer.state_data,
-    pending_address: cleanAddress
-  })
-  await sendMessage(customer.phone_number,
-    `📍 Dirección anotada: *${cleanAddress}*\n\n¿La confirmamos o quieres corregirla?`
-  )
-} else {
-    // No parece dirección — IA responde y redirige
+    const cleanAddress = await extractAddress(text) || text
+    await updateCustomerState(customer.id, 'CONFIRMANDO_DIRECCION', {
+      ...customer.state_data,
+      pending_address: cleanAddress
+    })
+    await sendMessage(customer.phone_number,
+      `📍 Dirección anotada: *${cleanAddress}*\n\n¿La confirmamos o quieres corregirla?`
+    )
+  } else {
     const reply = await generateFreeResponse(business.ai_context, text, customer.state, customer.state_data, business.id)
     await sendMessage(customer.phone_number, reply)
     await sendMessage(customer.phone_number, '📍 Cuando estés listo, escríbeme tu dirección de entrega.')
   }
 }
-
 async function handleConfirmandoDireccion(customer, business, userMessage, sendMessage) {
   const text = userMessage.trim()
   const stateData = customer.state_data || {}
@@ -584,9 +605,7 @@ async function handleState(customer, business, userMessage, hasMedia, sendMessag
       .from('orders')
       .update({ state: 'CONFIRMADO', payment_method: 'EFECTIVO' })
       .eq('id', stateData.order_id)
-
     await updateCustomerState(customer.id, 'EN_PREPARACION')
-
     const summary = formatCart(stateData.items || [])
     await sendMessage(business.owner_phone,
       `🔔 *NUEVO PEDIDO — PAGO EN EFECTIVO*\n\n` +
@@ -602,12 +621,7 @@ async function handleState(customer, business, userMessage, hasMedia, sendMessag
     return
   }
 
-  if (hasMedia || intent === 'ENVIO_COMPROBANTE') {
-    await handleEsperandoPago(customer, business, userMessage, hasMedia, sendMessage)
-  } else {
-    const reply = await generateFreeResponse(business.ai_context, userMessage, state, customer.state_data)
-    await sendMessage(customer.phone_number, reply)
-  }
+  await handleEsperandoPago(customer, business, userMessage, hasMedia, sendMessage)
   break
 }
     case 'VALIDANDO_PAGO':
