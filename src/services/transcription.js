@@ -1,3 +1,11 @@
+const axios = require('axios')
+const Groq = require('groq-sdk')
+const fs = require('fs')
+const path = require('path')
+const supabase = require('./supabase')
+
+const groq = new Groq({ apiKey: process.env.GROQ_API_KEY })
+
 async function transcribeAudio(mediaId, businessId = null) {
   const tempPath = path.join('/tmp', `audio_${mediaId}.ogg`)
   
@@ -21,7 +29,6 @@ async function transcribeAudio(mediaId, businessId = null) {
       language: 'es'
     })
 
-    // Registrar en Supabase — no bloquea si falla
     supabase.from('transcriptions').insert({
       media_id: mediaId,
       business_id: businessId,
@@ -36,7 +43,8 @@ async function transcribeAudio(mediaId, businessId = null) {
     console.error('Error transcribiendo audio:', err.message)
     return null
   } finally {
-    // Siempre limpia el archivo, haya fallado o no
     if (fs.existsSync(tempPath)) fs.unlinkSync(tempPath)
   }
 }
+
+module.exports = { transcribeAudio }
