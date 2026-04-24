@@ -94,7 +94,7 @@ REGLAS CRÍTICAS:
 2. Si menciona un producto específico para quitar o cambiar → siempre MODIFICAR_CARRITO, nunca CANCELAR.
 3. Si hay ambigüedad entre HACER_PEDIDO y MODIFICAR_CARRITO → HACER_PEDIDO.
 4. Si hay ambigüedad entre MODIFICAR_CARRITO y CANCELAR → MODIFICAR_CARRITO.
-
+5. "ya no la quiero", "quita eso", "saca ese", "sin ese" con un producto específico → siempre MODIFICAR_CARRITO.
 Responde solo la palabra exacta. Sin explicacion.`
       }]
     })

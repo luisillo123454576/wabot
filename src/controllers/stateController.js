@@ -660,17 +660,23 @@ async function handleState(customer, business, userMessage, hasMedia, sendMessag
 
   const intent = await classifyIntent(state, userMessage, business.id)
 
- const NO_REDIRIGIR_MENU = ['NUEVO', 'EN_PREPARACION', 'EN_CAMINO', 'VALIDANDO_PAGO', 'ESPERANDO_PAGO', 'CONFIRMANDO_DIRECCION', 'ENTREGADO']
-  const NO_CANCELAR = ['EN_PREPARACION', 'EN_CAMINO', 'VALIDANDO_PAGO', 'ENTREGADO', 'CONFIRMANDO_DIRECCION']
+const NO_REDIRIGIR_MENU = ['NUEVO', 'EN_PREPARACION', 'EN_CAMINO', 'VALIDANDO_PAGO', 'ESPERANDO_PAGO', 'CONFIRMANDO_DIRECCION', 'ENTREGADO']
+const NO_CANCELAR = ['EN_PREPARACION', 'EN_CAMINO', 'VALIDANDO_PAGO', 'ENTREGADO', 'CONFIRMANDO_DIRECCION']
 
-  if (intent === 'CANCELAR' && !NO_CANCELAR.includes(state)) {
-    await updateCustomerState(customer.id, 'NUEVO', {})
-    return await sendMessage(customer.phone_number, 'Pedido cancelado. ¿En qué puedo ayudarte ahora?')
+if (intent === 'CANCELAR' && !NO_CANCELAR.includes(state)) {
+  const result = await detectOrderItems(userMessage, business.id, customer.id)
+  if (result.type === 'FOUND' || result.type === 'AMBIGUOUS') {
+    const currentItems = customer.state_data?.items || []
+    await handleModificarCarrito(customer, business, userMessage, currentItems, sendMessage)
+    return
   }
+  await updateCustomerState(customer.id, 'NUEVO', {})
+  return await sendMessage(customer.phone_number, 'Pedido cancelado. ¿En qué puedo ayudarte ahora?')
+}
 
-  if (intent === 'VER_MENU' && !NO_REDIRIGIR_MENU.includes(state)) {
-    return await handleNuevo(customer, business, sendMessage)
-  }
+if (intent === 'VER_MENU' && !NO_REDIRIGIR_MENU.includes(state)) {
+  return await handleNuevo(customer, business, sendMessage)
+}
   // --- 2. EL SWITCH DE ESTADOS ---
   switch (state) {
   case 'NUEVO':
