@@ -27,7 +27,7 @@ async function updateCustomerState(customerId, newState, stateData = null, saveP
 
 function formatMenu(products) {
   if (!products || products.length === 0) return 'No hay productos disponibles.'
-  return products.map(p => `• ${p.name} — $${Number(p.price).toLocaleString('es-CO')}`).join('\n')
+  return products.map(p => `${p.emoji || '•'} ${p.name} — $${Number(p.price).toLocaleString('es-CO')}`).join('\n')
 }
 
 function formatCart(items) {
@@ -56,10 +56,10 @@ async function handleNuevo(customer, business, sendMessage) {
   const menu = formatMenu(products)
 
   const greeting = pickRandom([
-    `¡Hola! Bienvenido a *${business.name}* 👋\n\nAquí te dejamos nuestro menú:\n\n${menu}\n\n¿Qué te provoca pedir hoy?`,
-    `¡Buenas! Gracias por escribirnos a *${business.name}* 😄\n\nEsto es lo que tenemos:\n\n${menu}\n\n¿Qué vas a querer?`,
-    `¡Hola! En *${business.name}* estamos para servirte 🙌\n\nNuestro menú:\n\n${menu}\n\n¿Qué se te antoja?`
-  ])
+  `🍽️ *${business.name}*\n\n¡Hola! Bienvenido 👋\n\n🔥 *Menú:*\n\n${menu}\n\n_Dime qué quieres y lo anoto_ 😊`,
+  `👋 ¡Buenas! Gracias por escribirnos a *${business.name}*\n\n📋 *Lo que tenemos:*\n\n${menu}\n\n¿Qué vas a querer?`,
+  `¡Hola! En *${business.name}* estamos para servirte 🙌\n\n✨ *Menú:*\n\n${menu}\n\n¿Qué se te antoja?`
+])
 
   await sendMessage(customer.phone_number, greeting)
   await updateCustomerState(customer.id, 'MENU_ENVIADO')
